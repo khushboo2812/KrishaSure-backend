@@ -28,3 +28,9 @@ app.listen(PORT, () => {
 
 const aiRoutes = require('./routes/ai')
 app.use('/api/ai', aiRoutes)
+
+const categoryRoutes = require('./routes/categories')
+const slaRoutes = require('./routes/sla')
+
+app.use('/api/categories', categoryRoutes)
+app.use('/api/sla', slaRoutes)
