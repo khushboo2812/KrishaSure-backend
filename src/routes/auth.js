@@ -16,7 +16,6 @@ router.post('/login', async (req, res) => {
 
     const user = result.recordset[0]
 
-    // Compare password with hash
     const isMatch = await bcrypt.compare(password, user.password)
     
     if (!isMatch) {
@@ -31,6 +30,7 @@ router.post('/login', async (req, res) => {
 
     res.json({
       token,
+      mustChangePassword: user.mustChangePassword,
       user: { id: user.id, name: user.name, email: user.email, role: user.role }
     })
 

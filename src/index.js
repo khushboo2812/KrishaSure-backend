@@ -34,3 +34,17 @@ const slaRoutes = require('./routes/sla')
 
 app.use('/api/categories', categoryRoutes)
 app.use('/api/sla', slaRoutes)
+
+const { sendEmail } = require('./config/email')
+
+app.get('/test-email', async (req, res) => {
+  await sendEmail(
+    'khushboo@krishasolutions.net',
+    'KrishaSure Email Test!! 🎉',
+    '<h1>KrishaSure email is working!!</h1><p>Your email setup is complete!!</p>'
+  )
+  res.json({ message: 'Email sent!!' })
+})
+
+const agentRoutes = require('./routes/agents')
+app.use('/api/agents', agentRoutes)
