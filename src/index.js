@@ -25,3 +25,6 @@ const PORT = process.env.PORT || 5000
 app.listen(PORT, () => {
   console.log(`KrishaSure backend running on port ${PORT}`)
 })
+
+const aiRoutes = require('./routes/ai')
+app.use('/api/ai', aiRoutes)
