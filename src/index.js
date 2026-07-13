@@ -4,6 +4,8 @@ require('dotenv').config()
 const { connectDB } = require('./config/db')
 const ticketRoutes = require('./routes/tickets')
 const authRoutes = require('./routes/auth')
+const userRoutes = require('./routes/users')
+app.use('/api/users', userRoutes)
 
 const app = express()
 
