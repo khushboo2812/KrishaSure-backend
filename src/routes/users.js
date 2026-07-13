@@ -39,4 +39,21 @@ router.delete('/:id', async (req, res) => {
   }
 })
 
+// PUT reset password
+router.put('/:id/password', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { password } = req.body
+    
+    await sql.query`
+      UPDATE Users 
+      SET password = ${password}
+      WHERE id = ${id}
+    `
+    res.json({ message: 'Password updated successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router

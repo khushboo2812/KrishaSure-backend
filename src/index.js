@@ -5,7 +5,6 @@ const { connectDB } = require('./config/db')
 const ticketRoutes = require('./routes/tickets')
 const authRoutes = require('./routes/auth')
 const userRoutes = require('./routes/users')
-app.use('/api/users', userRoutes)
 
 const app = express()
 
@@ -20,6 +19,7 @@ app.get('/', (req, res) => {
 
 app.use('/api/tickets', ticketRoutes)
 app.use('/api/auth', authRoutes)
+app.use('/api/users', userRoutes)
 
 const PORT = process.env.PORT || 5000
 app.listen(PORT, () => {
