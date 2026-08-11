@@ -2,9 +2,16 @@ const express = require('express')
 const cors = require('cors')
 require('dotenv').config()
 const { connectDB } = require('./config/db')
+const { sendEmail } = require('./config/email')
+
 const ticketRoutes = require('./routes/tickets')
 const authRoutes = require('./routes/auth')
 const userRoutes = require('./routes/users')
+const setupRoutes = require('./routes/setup')
+const aiRoutes = require('./routes/ai')
+const categoryRoutes = require('./routes/categories')
+const slaRoutes = require('./routes/sla')
+const agentRoutes = require('./routes/agents')
 
 const app = express()
 
@@ -17,26 +24,6 @@ app.get('/', (req, res) => {
   res.json({ message: 'KrishaSure API is running!! 🚀' })
 })
 
-app.use('/api/tickets', ticketRoutes)
-app.use('/api/auth', authRoutes)
-app.use('/api/users', userRoutes)
-
-const PORT = process.env.PORT || 5000
-app.listen(PORT, () => {
-  console.log(`KrishaSure backend running on port ${PORT}`)
-})
-
-const aiRoutes = require('./routes/ai')
-app.use('/api/ai', aiRoutes)
-
-const categoryRoutes = require('./routes/categories')
-const slaRoutes = require('./routes/sla')
-
-app.use('/api/categories', categoryRoutes)
-app.use('/api/sla', slaRoutes)
-
-const { sendEmail } = require('./config/email')
-
 app.get('/test-email', async (req, res) => {
   await sendEmail(
     'khushboo@krishasolutions.net',
@@ -46,5 +33,16 @@ app.get('/test-email', async (req, res) => {
   res.json({ message: 'Email sent!!' })
 })
 
-const agentRoutes = require('./routes/agents')
+app.use('/api/tickets', ticketRoutes)
+app.use('/api/auth', authRoutes)
+app.use('/api/users', userRoutes)
+app.use('/api/setup', setupRoutes)
+app.use('/api/ai', aiRoutes)
+app.use('/api/categories', categoryRoutes)
+app.use('/api/sla', slaRoutes)
 app.use('/api/agents', agentRoutes)
+
+const PORT = process.env.PORT || 5000
+app.listen(PORT, () => {
+  console.log(`KrishaSure backend running on port ${PORT}`)
+})
