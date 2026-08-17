@@ -3,10 +3,9 @@ const router = express.Router()
 const bcrypt = require('bcryptjs')
 const { sql } = require('../config/db')
 
-// Check if setup is needed
 router.get('/status', async (req, res) => {
   try {
-    const result = await sql.query`SELECT COUNT(*) as count FROM Users`
+    const result = await sql.query`SELECT COUNT(*) as count FROM Companies`
     const setupRequired = result.recordset[0].count === 0
     res.json({ setupRequired })
   } catch (err) {
@@ -14,43 +13,42 @@ router.get('/status', async (req, res) => {
   }
 })
 
-// Create first Super Admin
 router.post('/create-admin', async (req, res) => {
   try {
     const { name, email, password, companyName } = req.body
 
-    // Safety check - only allow if no users exist
-    const check = await sql.query`SELECT COUNT(*) as count FROM Users`
-    if (check.recordset[0].count > 0) {
-      return res.status(403).json({ error: 'Setup already completed. Cannot create another initial admin.' })
-    }
+    // Create the company first
+    const companyResult = await sql.query`
+      INSERT INTO Companies (name, tier, databaseType)
+      OUTPUT INSERTED.id
+      VALUES (${companyName}, 'starter', 'shared')
+    `
+    const companyId = companyResult.recordset[0].id
 
     const hashedPassword = await bcrypt.hash(password, 10)
 
     await sql.query`
-      INSERT INTO Users (name, email, password, role, mustChangePassword)
-      VALUES (${name}, ${email}, ${hashedPassword}, 'superadmin', 0)
+      INSERT INTO Users (name, email, password, role, mustChangePassword, companyId)
+      VALUES (${name}, ${email}, ${hashedPassword}, 'superadmin', 0, ${companyId})
     `
 
-    // Create default categories
     await sql.query`
-      INSERT INTO Categories (name, description) VALUES
-      ('Network', 'Network and connectivity issues'),
-      ('Software', 'Software and application issues'),
-      ('Hardware', 'Hardware and equipment issues'),
-      ('Email', 'Email and communication issues')
+      INSERT INTO Categories (name, description, companyId) VALUES
+      ('Network', 'Network and connectivity issues', ${companyId}),
+      ('Software', 'Software and application issues', ${companyId}),
+      ('Hardware', 'Hardware and equipment issues', ${companyId}),
+      ('Email', 'Email and communication issues', ${companyId})
     `
 
-    // Create default SLA rules
     await sql.query`
-      INSERT INTO SLARules (priority, categoryId, maxHours) VALUES
-      ('Urgent', NULL, 2),
-      ('High', NULL, 8),
-      ('Medium', NULL, 24),
-      ('Low', NULL, 72)
+      INSERT INTO SLARules (priority, categoryId, maxHours, companyId) VALUES
+      ('Urgent', NULL, 2, ${companyId}),
+      ('High', NULL, 8, ${companyId}),
+      ('Medium', NULL, 24, ${companyId}),
+      ('Low', NULL, 72, ${companyId})
     `
 
-    res.status(201).json({ message: 'Setup completed successfully!!', companyName })
+    res.status(201).json({ message: 'Setup completed successfully!!', companyId })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

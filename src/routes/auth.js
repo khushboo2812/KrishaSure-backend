@@ -23,7 +23,7 @@ router.post('/login', async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, name: user.name },
+      { id: user.id, email: user.email, role: user.role, name: user.name, companyId: user.companyId },
       process.env.JWT_SECRET || 'krishasure_secret',
       { expiresIn: '24h' }
     )
@@ -31,8 +31,17 @@ router.post('/login', async (req, res) => {
     res.json({
       token,
       mustChangePassword: user.mustChangePassword,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role }
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, companyId: user.companyId }
     })
+
+  const companyResult = await sql.query`SELECT name FROM Companies WHERE id = ${user.companyId}`
+const companyName = companyResult.recordset[0]?.name || ''
+
+res.json({
+  token,
+  mustChangePassword: user.mustChangePassword,
+  user: { id: user.id, name: user.name, email: user.email, role: user.role, companyId: user.companyId, companyName }
+})
 
   } catch (err) {
     res.status(500).json({ error: err.message })

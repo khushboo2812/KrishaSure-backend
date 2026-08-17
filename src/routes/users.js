@@ -3,6 +3,7 @@ const router = express.Router()
 const bcrypt = require('bcryptjs')
 const { sql } = require('../config/db')
 const { sendEmail } = require('../config/email')
+const { authenticateToken } = require('../middleware/auth')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -13,10 +14,11 @@ function generateTempPassword() {
   return password
 }
 
-// GET all users
-router.get('/', async (req, res) => {
+// GET all users - filtered by company
+router.get('/', authenticateToken, async (req, res) => {
   try {
-    const result = await sql.query`SELECT id, name, email, role, createdAt FROM Users`
+    const { companyId } = req.user
+    const result = await sql.query`SELECT id, name, email, role, createdAt FROM Users WHERE companyId = ${companyId}`
     res.json(result.recordset)
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -24,8 +26,9 @@ router.get('/', async (req, res) => {
 })
 
 // POST create user
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   try {
+    const { companyId } = req.user
     const { name, email, role, level, skills } = req.body
 
     const existing = await sql.query`SELECT id FROM Users WHERE email = ${email}`
@@ -37,15 +40,14 @@ router.post('/', async (req, res) => {
     const hashedPassword = await bcrypt.hash(tempPassword, 10)
     
     await sql.query`
-      INSERT INTO Users (name, email, password, role)
-      VALUES (${name}, ${email}, ${hashedPassword}, ${role})
+      INSERT INTO Users (name, email, password, role, companyId)
+      VALUES (${name}, ${email}, ${hashedPassword}, ${role}, ${companyId})
     `
 
-    // If agent add to Agents table
     if (role === 'agent') {
       await sql.query`
-        INSERT INTO Agents (name, email, level, skills)
-        VALUES (${name}, ${email}, ${level || 'Junior'}, ${skills || ''})
+        INSERT INTO Agents (name, email, level, skills, companyId)
+        VALUES (${name}, ${email}, ${level || 'Junior'}, ${skills || ''}, ${companyId})
       `
     }
 
@@ -60,7 +62,7 @@ router.post('/', async (req, res) => {
           <p><strong>Email:</strong> ${email}</p>
           <p><strong>Temporary Password:</strong> ${tempPassword}</p>
           <p>Please login and change your password immediately!!</p>
-          <a href="http://localhost:5173" style="background: #00C2CB; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
+          <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
           <br/><br/>
           <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
         </div>
@@ -74,7 +76,7 @@ router.post('/', async (req, res) => {
 })
 
 // PUT reset password
-router.put('/:id/password', async (req, res) => {
+router.put('/:id/password', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
     const { password } = req.body
@@ -91,17 +93,18 @@ router.put('/:id/password', async (req, res) => {
 })
 
 // DELETE user
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    const userResult = await sql.query`SELECT * FROM Users WHERE id = ${id}`
+    const { companyId } = req.user
+    const userResult = await sql.query`SELECT * FROM Users WHERE id = ${id} AND companyId = ${companyId}`
     const user = userResult.recordset[0]
     
     if (user && user.role === 'agent') {
-      await sql.query`DELETE FROM Agents WHERE email = ${user.email}`
+      await sql.query`DELETE FROM Agents WHERE email = ${user.email} AND companyId = ${companyId}`
     }
     
-    await sql.query`DELETE FROM Users WHERE id = ${id}`
+    await sql.query`DELETE FROM Users WHERE id = ${id} AND companyId = ${companyId}`
     res.json({ message: 'User deleted successfully!!' })
   } catch (err) {
     res.status(500).json({ error: err.message })

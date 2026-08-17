@@ -1,24 +1,25 @@
 const express = require('express')
 const router = express.Router()
 const { sql } = require('../config/db')
+const { authenticateToken } = require('../middleware/auth')
 
-// GET all categories
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
-    const result = await sql.query`SELECT * FROM Categories ORDER BY name`
+    const { companyId } = req.user
+    const result = await sql.query`SELECT * FROM Categories WHERE companyId = ${companyId} ORDER BY name`
     res.json(result.recordset)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
-// POST create category
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   try {
+    const { companyId } = req.user
     const { name, description } = req.body
     await sql.query`
-      INSERT INTO Categories (name, description)
-      VALUES (${name}, ${description})
+      INSERT INTO Categories (name, description, companyId)
+      VALUES (${name}, ${description}, ${companyId})
     `
     res.status(201).json({ message: 'Category created successfully!!' })
   } catch (err) {
@@ -26,15 +27,15 @@ router.post('/', async (req, res) => {
   }
 })
 
-// PUT update category
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
+    const { companyId } = req.user
     const { name, description } = req.body
     await sql.query`
       UPDATE Categories 
       SET name = ${name}, description = ${description}
-      WHERE id = ${id}
+      WHERE id = ${id} AND companyId = ${companyId}
     `
     res.json({ message: 'Category updated successfully!!' })
   } catch (err) {
@@ -42,11 +43,11 @@ router.put('/:id', async (req, res) => {
   }
 })
 
-// DELETE category
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    await sql.query`DELETE FROM Categories WHERE id = ${id}`
+    const { companyId } = req.user
+    await sql.query`DELETE FROM Categories WHERE id = ${id} AND companyId = ${companyId}`
     res.json({ message: 'Category deleted successfully!!' })
   } catch (err) {
     res.status(500).json({ error: err.message })

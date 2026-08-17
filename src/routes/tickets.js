@@ -2,11 +2,13 @@ const express = require('express')
 const router = express.Router()
 const { sql } = require('../config/db')
 const { sendEmail } = require('../config/email')
+const { authenticateToken } = require('../middleware/auth')
 
-// GET all tickets
-router.get('/', async (req, res) => {
+// GET all tickets - filtered by company
+router.get('/', authenticateToken, async (req, res) => {
   try {
-    const result = await sql.query`SELECT * FROM Tickets ORDER BY createdAt DESC`
+    const { companyId } = req.user
+    const result = await sql.query`SELECT * FROM Tickets WHERE companyId = ${companyId} ORDER BY createdAt DESC`
     res.json(result.recordset)
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -14,10 +16,11 @@ router.get('/', async (req, res) => {
 })
 
 // GET ticket by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    const result = await sql.query`SELECT * FROM Tickets WHERE id = ${id}`
+    const { companyId } = req.user
+    const result = await sql.query`SELECT * FROM Tickets WHERE id = ${id} AND companyId = ${companyId}`
     if (result.recordset.length === 0) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
@@ -28,24 +31,22 @@ router.get('/:id', async (req, res) => {
 })
 
 // POST create ticket
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   try {
+    const { companyId } = req.user
     const { ticketId, title, description, category, priority, assignedTo, clientEmail } = req.body
     
     await sql.query`
-      INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail)
-      VALUES (${ticketId}, ${title}, ${description}, ${category}, ${priority}, ${assignedTo}, ${clientEmail})
+      INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId)
+      VALUES (${ticketId}, ${title}, ${description}, ${category}, ${priority}, ${assignedTo}, ${clientEmail}, ${companyId})
     `
 
-    // Get admin emails
-    const admins = await sql.query`SELECT email FROM Users WHERE role IN ('superadmin', 'admin')`
+    const admins = await sql.query`SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = ${companyId}`
     const adminEmails = admins.recordset.map(a => a.email).join(',')
 
-    // Get agent email
-    const agentResult = await sql.query`SELECT email FROM Users WHERE name = ${assignedTo}`
+    const agentResult = await sql.query`SELECT email FROM Users WHERE name = ${assignedTo} AND companyId = ${companyId}`
     const agentEmail = agentResult.recordset[0]?.email
 
-    // Email to client
     sendEmail(
       clientEmail,
       `Ticket ${ticketId} Created - ${title}`,
@@ -66,7 +67,6 @@ router.post('/', async (req, res) => {
       `
     )
 
-    // Email to agent
     if (agentEmail) {
       sendEmail(
         agentEmail,
@@ -74,14 +74,10 @@ router.post('/', async (req, res) => {
         `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h1 style="color: #0A2540;">New Ticket Assigned to You!!</h1>
-            <p>A new support ticket has been assigned to you!!</p>
             <table style="width: 100%; border-collapse: collapse;">
               <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticketId}</td></tr>
               <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Title</strong></td><td style="padding: 8px;">${title}</td></tr>
-              <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Category</strong></td><td style="padding: 8px;">${category}</td></tr>
-              <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Priority</strong></td><td style="padding: 8px;">${priority}</td></tr>
               <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Client</strong></td><td style="padding: 8px;">${clientEmail}</td></tr>
-              <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Description</strong></td><td style="padding: 8px;">${description || 'No description'}</td></tr>
             </table>
             <br/>
             <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
@@ -90,7 +86,6 @@ router.post('/', async (req, res) => {
       )
     }
 
-    // CC admins
     if (adminEmails) {
       sendEmail(
         adminEmails,
@@ -98,13 +93,9 @@ router.post('/', async (req, res) => {
         `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h1 style="color: #0A2540;">New Ticket Created</h1>
-            <p>A new ticket has been created and assigned!!</p>
             <table style="width: 100%; border-collapse: collapse;">
               <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticketId}</td></tr>
-              <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Title</strong></td><td style="padding: 8px;">${title}</td></tr>
-              <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Priority</strong></td><td style="padding: 8px;">${priority}</td></tr>
               <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Assigned To</strong></td><td style="padding: 8px;">${assignedTo}</td></tr>
-              <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Client</strong></td><td style="padding: 8px;">${clientEmail}</td></tr>
             </table>
             <br/>
             <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
@@ -120,26 +111,24 @@ router.post('/', async (req, res) => {
 })
 
 // PUT update ticket
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
+    const { companyId } = req.user
     const { status, assignedTo, resolvedAt } = req.body
 
-    // Get ticket details before update
-    const ticketResult = await sql.query`SELECT * FROM Tickets WHERE id = ${id}`
+    const ticketResult = await sql.query`SELECT * FROM Tickets WHERE id = ${id} AND companyId = ${companyId}`
     const ticket = ticketResult.recordset[0]
 
     await sql.query`
       UPDATE Tickets 
       SET status = ${status}, assignedTo = ${assignedTo}, resolvedAt = ${resolvedAt}
-      WHERE id = ${id}
+      WHERE id = ${id} AND companyId = ${companyId}
     `
 
-    // Get admin emails
-    const admins = await sql.query`SELECT email FROM Users WHERE role IN ('superadmin', 'admin')`
+    const admins = await sql.query`SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = ${companyId}`
     const adminEmails = admins.recordset.map(a => a.email).join(',')
 
-    // If ticket resolved — notify client and CC admins
     if (status === "Resolved" && ticket) {
       sendEmail(
         ticket.clientEmail,
@@ -147,20 +136,16 @@ router.put('/:id', async (req, res) => {
         `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h1 style="color: #16A34A;">Your Ticket has been Resolved!!</h1>
-            <p>Great news — your support ticket has been resolved!!</p>
             <table style="width: 100%; border-collapse: collapse;">
               <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticket.ticketId}</td></tr>
-              <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Title</strong></td><td style="padding: 8px;">${ticket.title}</td></tr>
               <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Resolved By</strong></td><td style="padding: 8px;">${ticket.assignedTo}</td></tr>
             </table>
-            <p>If you are still experiencing issues please raise a new ticket!!</p>
             <br/>
             <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
           </div>
         `
       )
 
-      // CC admins on resolution
       if (adminEmails) {
         sendEmail(
           adminEmails,
@@ -170,9 +155,6 @@ router.put('/:id', async (req, res) => {
               <h1 style="color: #16A34A;">Ticket Resolved</h1>
               <table style="width: 100%; border-collapse: collapse;">
                 <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticket.ticketId}</td></tr>
-                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Title</strong></td><td style="padding: 8px;">${ticket.title}</td></tr>
-                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Client</strong></td><td style="padding: 8px;">${ticket.clientEmail}</td></tr>
-                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Resolved By</strong></td><td style="padding: 8px;">${ticket.assignedTo}</td></tr>
               </table>
               <br/>
               <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
