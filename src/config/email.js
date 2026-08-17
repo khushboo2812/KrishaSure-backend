@@ -1,20 +1,11 @@
-const nodemailer = require('nodemailer')
+const { Resend } = require('resend')
 require('dotenv').config()
 
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: 587,
-  secure: false,
-  requireTLS: true,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-})
+const resend = new Resend(process.env.RESEND_API_KEY)
 
 const sendEmail = async (to, subject, html) => {
   try {
-    await transporter.sendMail({
+    await resend.emails.send({
       from: `KrishaSure <${process.env.EMAIL_FROM}>`,
       to,
       subject,
