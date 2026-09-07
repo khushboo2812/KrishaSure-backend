@@ -26,7 +26,7 @@ router.post('/login', async (req, res) => {
     const companyName = companyResult.rows[0]?.name || ''
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, name: user.name, companyId: user.companyid },
+      { id: user.id, email: user.email, role: user.role, name: user.name, companyId: user.companyid, clientOrgId: user.clientorgid },
       process.env.JWT_SECRET || 'krishasure_secret',
       { expiresIn: '24h' }
     )
@@ -34,7 +34,7 @@ router.post('/login', async (req, res) => {
     res.json({
       token,
       mustChangePassword: user.mustchangepassword,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, companyId: user.companyid, companyName }
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, companyId: user.companyid, companyName, clientOrgId: user.clientorgid }
     })
 
   } catch (err) {

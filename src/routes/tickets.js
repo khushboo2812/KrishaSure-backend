@@ -31,12 +31,12 @@ router.get('/:id', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
-    const { ticketId, title, description, category, priority, assignedTo, clientEmail } = req.body
+    const { ticketId, title, description, category, priority, assignedTo, clientEmail, clientOrgId } = req.body
     
-    await pool.query(
-      'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [ticketId, title, description, category, priority, assignedTo, clientEmail, companyId]
-    )
+  await pool.query(
+  'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+  [ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId || null]
+)
 
     const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = $1", [companyId])
     const adminEmails = admins.rows.map(a => a.email).join(',')
