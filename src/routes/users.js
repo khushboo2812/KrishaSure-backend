@@ -37,11 +37,13 @@ router.post('/', authenticateToken, async (req, res) => {
     const tempPassword = generateTempPassword()
     const hashedPassword = await bcrypt.hash(tempPassword, 10)
     const verificationToken = generateTempPassword() + generateTempPassword()
+
     
-    await pool.query(
-      'INSERT INTO Users (name, email, password, role, companyId, emailVerified, verificationToken) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [name, email, hashedPassword, role, companyId, false, verificationToken]
-    )
+   await pool.query(
+  `INSERT INTO Users (name, email, password, role, companyId, emailVerified, verificationToken, verificationTokenExpiry) 
+   VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + INTERVAL '24 hours')`,
+  [name, email, hashedPassword, role, companyId, false, verificationToken]
+)
 
     if (role === 'agent') {
       await pool.query(
@@ -86,6 +88,16 @@ router.get('/verify/:token', async (req, res) => {
 
     const user = result.rows[0]
 
+      
+    if (new Date() > new Date(user.verificationtokenexpiry)) {
+      return res.status(400).send(`
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; text-align: center;">
+          <h1 style="color: #DC2626;">⏰ Link Expired</h1>
+          <p>This verification link has expired. Please contact your administrator for a new one.</p>
+        </div>
+      `)
+    }
+
     await pool.query(
       'UPDATE Users SET emailVerified = true, verificationToken = NULL WHERE id = $1',
       [user.id]
@@ -100,22 +112,22 @@ router.get('/verify/:token', async (req, res) => {
       [hashedPassword, user.id]
     )
 
-    sendEmail(
-      user.email,
-      'Welcome to KrishaSure!! 🎉',
-      `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h1 style="color: #0A2540;">Email Verified!! Welcome to KrishaSure!!</h1>
-          <p>Hi ${user.name},</p>
-          <p><strong>Email:</strong> ${user.email}</p>
-          <p><strong>Temporary Password:</strong> ${tempPassword}</p>
-          <p>Please login and change your password immediately!!</p>
-          <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
-          <br/><br/>
-          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
-        </div>
-      `
-    )
+   sendEmail(
+  email,
+  'Verify your email - KrishaSure 📧',
+  `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h1 style="color: #0A2540;">Verify Your Email</h1>
+      <p>Hi ${name},</p>
+      <p>An account has been created for you on KrishaSure. Please verify your email address to activate your account.</p>
+      <a href="https://api.krishasure.io/api/users/verify/${verificationToken}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Verify My Email</a>
+      <br/><br/>
+      <p style="color: #DC2626; font-size: 13px; font-weight: 600;">⏰ This link is valid for 24 hours only!!</p>
+      <p style="color: #64748B; font-size: 12px;">Once verified, you'll receive your login credentials in a separate email.</p>
+      <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+    </div>
+  `
+)
 
     res.send(`
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; text-align: center;">
@@ -180,6 +192,30 @@ router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
     )
 
     res.json({ message: 'Welcome email resent successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.put('/:id/agent-details', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId } = req.user
+    const { level, skills } = req.body
+
+    const userResult = await pool.query('SELECT * FROM Users WHERE id = $1 AND companyId = $2', [id, companyId])
+    const user = userResult.rows[0]
+
+    if (!user || user.role !== 'agent') {
+      return res.status(400).json({ error: 'User is not an agent' })
+    }
+
+    await pool.query(
+      'UPDATE Agents SET level = $1, skills = $2 WHERE email = $3 AND companyId = $4',
+      [level, skills, user.email, companyId]
+    )
+
+    res.json({ message: 'Agent details updated successfully!!' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
