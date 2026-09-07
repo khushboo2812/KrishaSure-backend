@@ -44,6 +44,7 @@ router.post('/', authenticateToken, async (req, res) => {
     const agentResult = await pool.query('SELECT email FROM Users WHERE name = $1 AND companyId = $2', [assignedTo, companyId])
     const agentEmail = agentResult.rows[0]?.email
 
+    // Client email with admins CC'd
     sendEmail(
       clientEmail,
       `Ticket ${ticketId} Created - ${title}`,
@@ -58,9 +59,11 @@ router.post('/', authenticateToken, async (req, res) => {
           <br/>
           <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
         </div>
-      `
+      `,
+      adminEmails
     )
 
+    // Agent email with admins CC'd
     if (agentEmail) {
       sendEmail(
         agentEmail,
@@ -75,25 +78,8 @@ router.post('/', authenticateToken, async (req, res) => {
             <br/>
             <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
           </div>
-        `
-      )
-    }
-
-    if (adminEmails) {
-      sendEmail(
-        adminEmails,
-        `[CC] New Ticket ${ticketId} - ${title}`,
-        `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h1 style="color: #0A2540;">New Ticket Created</h1>
-            <table style="width: 100%; border-collapse: collapse;">
-              <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticketId}</td></tr>
-              <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Assigned To</strong></td><td style="padding: 8px;">${assignedTo}</td></tr>
-            </table>
-            <br/>
-            <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
-          </div>
-        `
+        `,
+        adminEmails
       )
     }
 
@@ -134,25 +120,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
             <br/>
             <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
           </div>
-        `
+        `,
+        adminEmails
       )
-
-      if (adminEmails) {
-        sendEmail(
-          adminEmails,
-          `[CC] Ticket ${ticket.ticketid} Resolved`,
-          `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h1 style="color: #16A34A;">Ticket Resolved</h1>
-              <table style="width: 100%; border-collapse: collapse;">
-                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticket.ticketid}</td></tr>
-              </table>
-              <br/>
-              <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
-            </div>
-          `
-        )
-      }
     }
 
     res.json({ message: 'Ticket updated successfully!!' })
