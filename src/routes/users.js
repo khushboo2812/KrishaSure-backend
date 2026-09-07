@@ -36,10 +36,11 @@ router.post('/', authenticateToken, async (req, res) => {
 
     const tempPassword = generateTempPassword()
     const hashedPassword = await bcrypt.hash(tempPassword, 10)
+    const verificationToken = generateTempPassword() + generateTempPassword()
     
     await pool.query(
-      'INSERT INTO Users (name, email, password, role, companyId) VALUES ($1, $2, $3, $4, $5)',
-      [name, email, hashedPassword, role, companyId]
+      'INSERT INTO Users (name, email, password, role, companyId, emailVerified, verificationToken) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [name, email, hashedPassword, role, companyId, false, verificationToken]
     )
 
     if (role === 'agent') {
@@ -49,15 +50,66 @@ router.post('/', authenticateToken, async (req, res) => {
       )
     }
 
+    // Send VERIFICATION email first (not welcome email yet)
     sendEmail(
       email,
+      'Verify your email - KrishaSure 📧',
+      `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #0A2540;">Verify Your Email</h1>
+          <p>Hi ${name},</p>
+          <p>An account has been created for you on KrishaSure. Please verify your email address to activate your account.</p>
+          <a href="https://api.krishasure.io/api/users/verify/${verificationToken}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Verify My Email</a>
+          <br/><br/>
+          <p style="color: #64748B; font-size: 12px;">Once verified, you'll receive your login credentials in a separate email.</p>
+          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+        </div>
+      `
+    )
+
+    res.status(201).json({ message: 'User created successfully!! Verification email sent!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET verify email
+router.get('/verify/:token', async (req, res) => {
+  try {
+    const { token } = req.params
+
+    const result = await pool.query('SELECT * FROM Users WHERE verificationToken = $1', [token])
+    
+    if (result.rows.length === 0) {
+      return res.status(400).send('<h1>Invalid or expired verification link</h1>')
+    }
+
+    const user = result.rows[0]
+
+    await pool.query(
+      'UPDATE Users SET emailVerified = true, verificationToken = NULL WHERE id = $1',
+      [user.id]
+    )
+
+    // Now generate and send the actual temp password
+    const tempPassword = generateTempPassword()
+    const hashedPassword = await bcrypt.hash(tempPassword, 10)
+
+    await pool.query(
+      'UPDATE Users SET password = $1, mustChangePassword = true WHERE id = $2',
+      [hashedPassword, user.id]
+    )
+
+    sendEmail(
+      user.email,
       'Welcome to KrishaSure!! 🎉',
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h1 style="color: #0A2540;">Welcome to KrishaSure!!</h1>
-          <p>Hi ${name},</p>
-          <p><strong>Email:</strong> ${email}</p>
+          <h1 style="color: #0A2540;">Email Verified!! Welcome to KrishaSure!!</h1>
+          <p>Hi ${user.name},</p>
+          <p><strong>Email:</strong> ${user.email}</p>
           <p><strong>Temporary Password:</strong> ${tempPassword}</p>
+          <p>Please login and change your password immediately!!</p>
           <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
           <br/><br/>
           <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
@@ -65,9 +117,14 @@ router.post('/', authenticateToken, async (req, res) => {
       `
     )
 
-    res.status(201).json({ message: 'User created successfully!! Welcome email sent!!' })
+    res.send(`
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; text-align: center;">
+        <h1 style="color: #16A34A;">✅ Email Verified!!</h1>
+        <p>Check your inbox for your login credentials!!</p>
+      </div>
+    `)
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(500).send('<h1>Something went wrong</h1>')
   }
 })
 
