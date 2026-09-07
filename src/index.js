@@ -49,3 +49,6 @@ app.listen(PORT, () => {
 
 const companyRoutes = require('./routes/companies')
 app.use('/api/companies', companyRoutes)
+
+const passwordResetRoutes = require('./routes/passwordReset')
+app.use('/api/password-reset', passwordResetRoutes)
