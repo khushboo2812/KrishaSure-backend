@@ -27,7 +27,7 @@ router.get('/', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
-    const { name, email, role, level, skills } = req.body
+    const { name, email, role, level, skills, clientOrgId } = req.body
 
     const existing = await pool.query('SELECT id FROM Users WHERE email = $1', [email])
     if (existing.rows.length > 0) {
@@ -39,10 +39,10 @@ router.post('/', authenticateToken, async (req, res) => {
     const verificationToken = generateTempPassword() + generateTempPassword()
 
     
-   await pool.query(
-  `INSERT INTO Users (name, email, password, role, companyId, emailVerified, verificationToken, verificationTokenExpiry) 
-   VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + INTERVAL '24 hours')`,
-  [name, email, hashedPassword, role, companyId, false, verificationToken]
+ await pool.query(
+  `INSERT INTO Users (name, email, password, role, companyId, emailVerified, verificationToken, verificationTokenExpiry, clientOrgId) 
+   VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + INTERVAL '24 hours', $8)`,
+  [name, email, hashedPassword, role, companyId, false, verificationToken, clientOrgId || null]
 )
 
     if (role === 'agent') {
