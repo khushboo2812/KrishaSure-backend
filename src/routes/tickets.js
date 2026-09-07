@@ -31,12 +31,26 @@ router.get('/:id', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
-    const { ticketId, title, description, category, priority, assignedTo, clientEmail, clientOrgId } = req.body
+    const { title, description, category, priority, assignedTo, clientEmail, clientOrgId } = req.body
+
+    const countResult = await pool.query(
+      "SELECT ticketId FROM Tickets WHERE companyId = $1 ORDER BY id DESC LIMIT 1",
+      [companyId]
+    )
+
+    let nextNum = 1
+    if (countResult.rows.length > 0) {
+      const lastId = countResult.rows[0].ticketid
+      const lastNum = parseInt(lastId.split('-')[1])
+      nextNum = lastNum + 1
+    }
+
+    const ticketId = `KS-${String(nextNum).padStart(3, '0')}`
     
-  await pool.query(
-  'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-  [ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId || null]
-)
+    await pool.query(
+      'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      [ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId || null]
+    )
 
     const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = $1", [companyId])
     const adminEmails = admins.rows.map(a => a.email).join(',')
@@ -44,7 +58,6 @@ router.post('/', authenticateToken, async (req, res) => {
     const agentResult = await pool.query('SELECT email FROM Users WHERE name = $1 AND companyId = $2', [assignedTo, companyId])
     const agentEmail = agentResult.rows[0]?.email
 
-    // Client email with admins CC'd
     sendEmail(
       clientEmail,
       `Ticket ${ticketId} Created - ${title}`,
@@ -63,7 +76,6 @@ router.post('/', authenticateToken, async (req, res) => {
       adminEmails
     )
 
-    // Agent email with admins CC'd
     if (agentEmail) {
       sendEmail(
         agentEmail,
@@ -83,7 +95,7 @@ router.post('/', authenticateToken, async (req, res) => {
       )
     }
 
-    res.status(201).json({ message: 'Ticket created successfully!!' })
+    res.status(201).json({ message: 'Ticket created successfully!!', ticketId })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
