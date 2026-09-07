@@ -52,3 +52,5 @@ app.use('/api/companies', companyRoutes)
 
 const passwordResetRoutes = require('./routes/passwordReset')
 app.use('/api/password-reset', passwordResetRoutes)
+const clientOrgRoutes = require('./routes/clientOrgs')
+app.use('/api/client-orgs', clientOrgRoutes)
