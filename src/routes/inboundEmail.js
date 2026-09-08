@@ -104,7 +104,7 @@ if (!defaultCategory) {
       [ticketId, subject || 'No subject', body, defaultCategory, defaultPriority, assignedTo, senderEmail, companyId, clientOrgId, initialStatus, 'email']
     )
 
-    const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = $1", [companyId])
+    const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin', 'platform_owner') AND companyId = $1", [companyId])
     const adminEmails = admins.rows.map(a => a.email).join(',')
 
     if (assignedTo) {
