@@ -33,7 +33,7 @@ router.get('/', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
-    const { name, email, role, level, skills, clientOrgId } = req.body
+    const { name, email, role, level, skills, clientOrgId, alsoAgent } = req.body
 
     const existing = await pool.query('SELECT id FROM Users WHERE email = $1', [email])
     if (existing.rows.length > 0) {
@@ -50,12 +50,12 @@ router.post('/', authenticateToken, async (req, res) => {
       [name, email, hashedPassword, role, companyId, false, verificationToken, clientOrgId || null]
     )
 
-    if (role === 'agent') {
-      await pool.query(
-        'INSERT INTO Agents (name, email, level, skills, companyId) VALUES ($1, $2, $3, $4, $5)',
-        [name, email, level || 'Junior', skills || '', companyId]
-      )
-    }
+   if (role === 'agent' || (role === 'admin' && alsoAgent)) {
+  await pool.query(
+    'INSERT INTO Agents (name, email, level, skills, companyId) VALUES ($1, $2, $3, $4, $5)',
+    [name, email, level || 'Junior', skills || '', companyId]
+  )
+}
 
     sendEmail(
       email,
