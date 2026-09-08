@@ -31,9 +31,9 @@ router.post('/:ticketId', authenticateToken, async (req, res) => {
     const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1', [ticketId])
     const ticket = ticketResult.rows[0]
 
-    if (ticket) {
+        if (ticket) {
       const agentResult = await pool.query(
-        'SELECT email FROM Users WHERE name = $1 AND companyId = $2',
+        'SELECT email FROM Agents WHERE name = $1 AND companyId = $2',
         [ticket.assignedto, ticket.companyid]
       )
       const agentEmail = agentResult.rows[0]?.email

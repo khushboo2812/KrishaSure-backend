@@ -56,8 +56,8 @@ await pool.query(
     const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = $1", [companyId])
     const adminEmails = admins.rows.map(a => a.email).join(',')
 
-    const agentResult = await pool.query('SELECT email FROM Users WHERE name = $1 AND companyId = $2', [assignedTo, companyId])
-    const agentEmail = agentResult.rows[0]?.email
+    const agentResult = await pool.query('SELECT email FROM Agents WHERE name = $1 AND companyId = $2', [assignedTo, companyId])
+const agentEmail = agentResult.rows[0]?.email
 
     sendEmail(
       clientEmail,

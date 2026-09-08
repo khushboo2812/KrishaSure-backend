@@ -109,9 +109,9 @@ if (!defaultCategory) {
 
     if (assignedTo) {
       const agentEmailResult = await pool.query(
-        'SELECT email FROM Users WHERE name = $1 AND companyId = $2',
-        [assignedTo, companyId]
-      )
+  'SELECT email FROM Agents WHERE name = $1 AND companyId = $2',
+  [assignedTo, companyId]
+)
       const agentEmailAddress = agentEmailResult.rows[0]?.email
 
       if (agentEmailAddress) {
