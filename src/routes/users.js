@@ -81,12 +81,51 @@ router.post('/', authenticateToken, async (req, res) => {
 })
 
 // GET verify email
+// GET verify email - shows a confirmation page (does NOT verify yet)
 router.get('/verify/:token', async (req, res) => {
   try {
     const { token } = req.params
 
     const result = await pool.query('SELECT * FROM Users WHERE verificationToken = $1', [token])
-    
+
+    if (result.rows.length === 0) {
+      return res.status(400).send('<h1>Invalid or expired verification link</h1>')
+    }
+
+    const user = result.rows[0]
+
+    if (new Date() > new Date(user.verificationtokenexpiry)) {
+      return res.status(400).send(`
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; text-align: center;">
+          <h1 style="color: #DC2626;">⏰ Link Expired</h1>
+          <p>This verification link has expired. Please contact your administrator for a new one.</p>
+        </div>
+      `)
+    }
+
+    res.send(`
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; text-align: center;">
+        <h1 style="color: #0A2540;">Confirm Your Email</h1>
+        <p>Hi ${user.name}, click below to confirm ${user.email} and activate your KrishaSure account.</p>
+        <form method="POST" action="https://api.krishasure.io/api/users/verify/${token}/confirm">
+          <button type="submit" style="background: #00C2CB; color: #0A2540; padding: 14px 32px; border-radius: 8px; border: none; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 16px;">
+            Confirm My Email
+          </button>
+        </form>
+      </div>
+    `)
+  } catch (err) {
+    res.status(500).send('<h1>Something went wrong</h1>')
+  }
+})
+
+// POST confirm - this actually performs verification, only triggered by the button click
+router.post('/verify/:token/confirm', async (req, res) => {
+  try {
+    const { token } = req.params
+
+    const result = await pool.query('SELECT * FROM Users WHERE verificationToken = $1', [token])
+
     if (result.rows.length === 0) {
       return res.status(400).send('<h1>Invalid or expired verification link</h1>')
     }
@@ -237,6 +276,7 @@ router.put('/:id/agent-details', authenticateToken, async (req, res) => {
     res.status(500).json({ error: err.message })
   }
 })
+
 router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
