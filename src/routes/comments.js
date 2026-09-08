@@ -78,4 +78,49 @@ router.post('/:ticketId', authenticateToken, async (req, res) => {
   }
 })
 
+// PUT edit comment
+router.put('/:commentId', authenticateToken, async (req, res) => {
+  try {
+    const { commentId } = req.params
+    const { comment } = req.body
+    const { email } = req.user
+
+    const existing = await pool.query('SELECT * FROM TicketComments WHERE id = $1', [commentId])
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Comment not found' })
+    }
+
+    if (existing.rows[0].authoremail !== email) {
+      return res.status(403).json({ error: 'You can only edit your own comments' })
+    }
+
+    await pool.query('UPDATE TicketComments SET comment = $1 WHERE id = $2', [comment, commentId])
+    res.json({ message: 'Comment updated successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// DELETE comment
+router.delete('/:commentId', authenticateToken, async (req, res) => {
+  try {
+    const { commentId } = req.params
+    const { email } = req.user
+
+    const existing = await pool.query('SELECT * FROM TicketComments WHERE id = $1', [commentId])
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Comment not found' })
+    }
+
+    if (existing.rows[0].authoremail !== email) {
+      return res.status(403).json({ error: 'You can only delete your own comments' })
+    }
+
+    await pool.query('DELETE FROM TicketComments WHERE id = $1', [commentId])
+    res.json({ message: 'Comment deleted successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router
