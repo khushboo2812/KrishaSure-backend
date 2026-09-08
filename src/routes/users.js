@@ -18,7 +18,7 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
     const result = await pool.query(
-      `SELECT u.id, u.name, u.email, u.role, u.createdAt, u.clientOrgId, c.name as clientOrgName 
+      `SELECT u.id, u.name, u.email, u.role, u.createdAt, u.clientOrgId, u.emailVerified, u.mustChangePassword, c.name as clientOrgName 
        FROM Users u
        LEFT JOIN ClientOrganizations c ON u.clientOrgId = c.id
        WHERE u.companyId = $1`,
