@@ -182,6 +182,32 @@ router.post('/verify/:token/confirm', async (req, res) => {
   }
 })
 
+router.put('/:id/name', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId } = req.user
+    const { name } = req.body
+
+    const userResult = await pool.query('SELECT * FROM Users WHERE id = $1 AND companyId = $2', [id, companyId])
+    const user = userResult.rows[0]
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    await pool.query('UPDATE Users SET name = $1 WHERE id = $2', [name, id])
+
+    // Keep the Agents table in sync if this user is also an agent
+    if (user.role === 'agent' || user.role === 'admin' || user.role === 'superadmin' || user.role === 'platform_owner') {
+      await pool.query('UPDATE Agents SET name = $1 WHERE email = $2 AND companyId = $3', [name, user.email, companyId])
+    }
+
+    res.json({ message: 'Name updated successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // POST resend verification email
 router.post('/:id/resend-verification', authenticateToken, async (req, res) => {
   try {
