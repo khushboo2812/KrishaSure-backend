@@ -73,8 +73,13 @@ router.post('/', async (req, res) => {
     const companyId = user.companyid
     const clientOrgId = user.clientorgid || null
 
-    const categoriesResult = await pool.query('SELECT * FROM Categories WHERE companyId = $1 ORDER BY id LIMIT 1', [companyId])
-    const defaultCategory = categoriesResult.rows[0]?.name || 'General'
+    const categoriesResult = await pool.query("SELECT * FROM Categories WHERE companyId = $1 AND name = 'General' LIMIT 1", [companyId])
+let defaultCategory = categoriesResult.rows[0]?.name
+
+if (!defaultCategory) {
+  const fallbackResult = await pool.query('SELECT * FROM Categories WHERE companyId = $1 ORDER BY id LIMIT 1', [companyId])
+  defaultCategory = fallbackResult.rows[0]?.name || 'General'
+}
     const defaultPriority = 'Medium'
 
     const agentsResult = await pool.query('SELECT * FROM Agents WHERE companyId = $1', [companyId])
