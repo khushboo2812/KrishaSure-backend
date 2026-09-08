@@ -197,6 +197,51 @@ router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
   }
 })
 
+router.post('/:id/resend-verification', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId } = req.user
+
+    const userResult = await pool.query('SELECT * FROM Users WHERE id = $1 AND companyId = $2', [id, companyId])
+    const user = userResult.rows[0]
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    if (user.emailverified) {
+      return res.status(400).json({ error: 'This user has already verified their email' })
+    }
+
+    const verificationToken = generateTempPassword() + generateTempPassword()
+
+    await pool.query(
+      "UPDATE Users SET verificationToken = $1, verificationTokenExpiry = NOW() + INTERVAL '24 hours' WHERE id = $2",
+      [verificationToken, id]
+    )
+
+    sendEmail(
+      user.email,
+      'Verify your email - KrishaSure 📧',
+      `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #0A2540;">Verify Your Email</h1>
+          <p>Hi ${user.name},</p>
+          <p>Please verify your email address to activate your KrishaSure account.</p>
+          <a href="https://api.krishasure.io/api/users/verify/${verificationToken}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Verify My Email</a>
+          <br/><br/>
+          <p style="color: #DC2626; font-size: 13px; font-weight: 600;">⏰ This link is valid for 24 hours only!!</p>
+          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+        </div>
+      `
+    )
+
+    res.json({ message: 'Verification email resent successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.put('/:id/agent-details', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
