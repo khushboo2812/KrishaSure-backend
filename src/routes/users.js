@@ -17,7 +17,13 @@ function generateTempPassword() {
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
-    const result = await pool.query('SELECT id, name, email, role, createdAt FROM Users WHERE companyId = $1', [companyId])
+    const result = await pool.query(
+      `SELECT u.id, u.name, u.email, u.role, u.createdAt, u.clientOrgId, c.name as clientOrgName 
+       FROM Users u
+       LEFT JOIN ClientOrganizations c ON u.clientOrgId = c.id
+       WHERE u.companyId = $1`,
+      [companyId]
+    )
     res.json(result.rows)
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -37,13 +43,12 @@ router.post('/', authenticateToken, async (req, res) => {
     const tempPassword = generateTempPassword()
     const hashedPassword = await bcrypt.hash(tempPassword, 10)
     const verificationToken = generateTempPassword() + generateTempPassword()
-
     
- await pool.query(
-  `INSERT INTO Users (name, email, password, role, companyId, emailVerified, verificationToken, verificationTokenExpiry, clientOrgId) 
-   VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + INTERVAL '24 hours', $8)`,
-  [name, email, hashedPassword, role, companyId, false, verificationToken, clientOrgId || null]
-)
+    await pool.query(
+      `INSERT INTO Users (name, email, password, role, companyId, emailVerified, verificationToken, verificationTokenExpiry, clientOrgId) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + INTERVAL '24 hours', $8)`,
+      [name, email, hashedPassword, role, companyId, false, verificationToken, clientOrgId || null]
+    )
 
     if (role === 'agent') {
       await pool.query(
@@ -52,7 +57,6 @@ router.post('/', authenticateToken, async (req, res) => {
       )
     }
 
-    // Send VERIFICATION email first (not welcome email yet)
     sendEmail(
       email,
       'Verify your email - KrishaSure 📧',
@@ -63,6 +67,7 @@ router.post('/', authenticateToken, async (req, res) => {
           <p>An account has been created for you on KrishaSure. Please verify your email address to activate your account.</p>
           <a href="https://api.krishasure.io/api/users/verify/${verificationToken}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Verify My Email</a>
           <br/><br/>
+          <p style="color: #DC2626; font-size: 13px; font-weight: 600;">⏰ This link is valid for 24 hours only!!</p>
           <p style="color: #64748B; font-size: 12px;">Once verified, you'll receive your login credentials in a separate email.</p>
           <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
         </div>
@@ -88,7 +93,6 @@ router.get('/verify/:token', async (req, res) => {
 
     const user = result.rows[0]
 
-      
     if (new Date() > new Date(user.verificationtokenexpiry)) {
       return res.status(400).send(`
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; text-align: center;">
@@ -103,7 +107,6 @@ router.get('/verify/:token', async (req, res) => {
       [user.id]
     )
 
-    // Now generate and send the actual temp password
     const tempPassword = generateTempPassword()
     const hashedPassword = await bcrypt.hash(tempPassword, 10)
 
@@ -112,22 +115,22 @@ router.get('/verify/:token', async (req, res) => {
       [hashedPassword, user.id]
     )
 
-   sendEmail(
-  email,
-  'Verify your email - KrishaSure 📧',
-  `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h1 style="color: #0A2540;">Verify Your Email</h1>
-      <p>Hi ${name},</p>
-      <p>An account has been created for you on KrishaSure. Please verify your email address to activate your account.</p>
-      <a href="https://api.krishasure.io/api/users/verify/${verificationToken}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Verify My Email</a>
-      <br/><br/>
-      <p style="color: #DC2626; font-size: 13px; font-weight: 600;">⏰ This link is valid for 24 hours only!!</p>
-      <p style="color: #64748B; font-size: 12px;">Once verified, you'll receive your login credentials in a separate email.</p>
-      <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
-    </div>
-  `
-)
+    sendEmail(
+      user.email,
+      'Welcome to KrishaSure!! 🎉',
+      `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #0A2540;">Email Verified!! Welcome to KrishaSure!!</h1>
+          <p>Hi ${user.name},</p>
+          <p><strong>Email:</strong> ${user.email}</p>
+          <p><strong>Temporary Password:</strong> ${tempPassword}</p>
+          <p>Please login and change your password immediately!!</p>
+          <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
+          <br/><br/>
+          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+        </div>
+      `
+    )
 
     res.send(`
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; text-align: center;">
@@ -140,63 +143,7 @@ router.get('/verify/:token', async (req, res) => {
   }
 })
 
-router.put('/:id/password', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params
-    const { password } = req.body
-    const hashedPassword = await bcrypt.hash(password, 10)
-    await pool.query(
-      'UPDATE Users SET password = $1, mustChangePassword = false WHERE id = $2',
-      [hashedPassword, id]
-    )
-    res.json({ message: 'Password updated successfully!!' })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params
-    const { companyId } = req.user
-
-    const userResult = await pool.query('SELECT * FROM Users WHERE id = $1 AND companyId = $2', [id, companyId])
-    const user = userResult.rows[0]
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' })
-    }
-
-    const tempPassword = generateTempPassword()
-    const hashedPassword = await bcrypt.hash(tempPassword, 10)
-
-    await pool.query(
-      'UPDATE Users SET password = $1, mustChangePassword = true WHERE id = $2',
-      [hashedPassword, id]
-    )
-
-    sendEmail(
-      user.email,
-      'Welcome to KrishaSure!! 🎉',
-      `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h1 style="color: #0A2540;">Welcome to KrishaSure!!</h1>
-          <p>Hi ${user.name},</p>
-          <p><strong>Email:</strong> ${user.email}</p>
-          <p><strong>Temporary Password:</strong> ${tempPassword}</p>
-          <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
-          <br/><br/>
-          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
-        </div>
-      `
-    )
-
-    res.json({ message: 'Welcome email resent successfully!!' })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
+// POST resend verification email
 router.post('/:id/resend-verification', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
@@ -242,6 +189,22 @@ router.post('/:id/resend-verification', authenticateToken, async (req, res) => {
   }
 })
 
+// PUT reset password
+router.put('/:id/password', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { password } = req.body
+    const hashedPassword = await bcrypt.hash(password, 10)
+    await pool.query(
+      'UPDATE Users SET password = $1, mustChangePassword = false WHERE id = $2',
+      [hashedPassword, id]
+    )
+    res.json({ message: 'Password updated successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.put('/:id/agent-details', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
@@ -261,6 +224,48 @@ router.put('/:id/agent-details', authenticateToken, async (req, res) => {
     )
 
     res.json({ message: 'Agent details updated successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId } = req.user
+
+    const userResult = await pool.query('SELECT * FROM Users WHERE id = $1 AND companyId = $2', [id, companyId])
+    const user = userResult.rows[0]
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    const tempPassword = generateTempPassword()
+    const hashedPassword = await bcrypt.hash(tempPassword, 10)
+
+    await pool.query(
+      'UPDATE Users SET password = $1, mustChangePassword = true WHERE id = $2',
+      [hashedPassword, id]
+    )
+
+    sendEmail(
+      user.email,
+      'Welcome to KrishaSure!! 🎉',
+      `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #0A2540;">Welcome to KrishaSure!!</h1>
+          <p>Hi ${user.name},</p>
+          <p><strong>Email:</strong> ${user.email}</p>
+          <p><strong>Temporary Password:</strong> ${tempPassword}</p>
+          <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
+          <br/><br/>
+          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+        </div>
+      `
+    )
+
+    res.json({ message: 'Welcome email resent successfully!!' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
