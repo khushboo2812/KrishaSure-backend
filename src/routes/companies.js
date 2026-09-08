@@ -34,17 +34,17 @@ router.get('/', authenticateToken, requirePlatformOwner, async (req, res) => {
 // POST create new company + their superadmin
 router.post('/', authenticateToken, requirePlatformOwner, async (req, res) => {
   try {
-    const { companyName, adminName, adminEmail, tier } = req.body
+    const { companyName, adminName, adminEmail, tier, companyType } = req.body
 
     const existing = await pool.query('SELECT id FROM Users WHERE email = $1', [adminEmail])
     if (existing.rows.length > 0) {
       return res.status(400).json({ error: 'A user with this email already exists!!' })
     }
 
-    const companyResult = await pool.query(
-      'INSERT INTO Companies (name, tier, databaseType) VALUES ($1, $2, $3) RETURNING id',
-      [companyName, tier || 'starter', 'shared']
-    )
+   const companyResult = await pool.query(
+  'INSERT INTO Companies (name, tier, databaseType, companyType) VALUES ($1, $2, $3, $4) RETURNING id',
+  [companyName, tier || 'starter', 'shared', companyType || 'internal']
+)
     const companyId = companyResult.rows[0].id
 
     const tempPassword = generateTempPassword()
