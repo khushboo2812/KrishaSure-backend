@@ -1,9 +1,9 @@
 const express = require('express')
 const router = express.Router()
 const { pool } = require('../config/db')
+const { sendEmail } = require('../config/email')
 const { authenticateToken } = require('../middleware/auth')
 
-// GET comments for a ticket
 router.get('/:ticketId', authenticateToken, async (req, res) => {
   try {
     const { ticketId } = req.params
@@ -17,7 +17,6 @@ router.get('/:ticketId', authenticateToken, async (req, res) => {
   }
 })
 
-// POST add comment
 router.post('/:ticketId', authenticateToken, async (req, res) => {
   try {
     const { ticketId } = req.params
@@ -28,6 +27,42 @@ router.post('/:ticketId', authenticateToken, async (req, res) => {
       'INSERT INTO TicketComments (ticketId, authorName, authorEmail, comment) VALUES ($1, $2, $3, $4)',
       [ticketId, name, email, comment]
     )
+
+    // Get ticket details to know who to notify
+    const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1', [ticketId])
+    const ticket = ticketResult.rows[0]
+
+    if (ticket) {
+      // Get assigned agent's email
+      const agentResult = await pool.query(
+        'SELECT email FROM Users WHERE name = $1 AND companyId = $2',
+        [ticket.assignedto, ticket.companyid]
+      )
+      const agentEmail = agentResult.rows[0]?.email
+
+      const recipients = new Set()
+      if (ticket.clientemail && ticket.clientemail !== email) recipients.add(ticket.clientemail)
+      if (agentEmail && agentEmail !== email) recipients.add(agentEmail)
+
+      recipients.forEach(recipient => {
+        sendEmail(
+          recipient,
+          `New Comment on Ticket ${ticket.ticketid}`,
+          `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h1 style="color: #0A2540;">New Comment Added</h1>
+              <p><strong>${name}</strong> added a comment on ticket <strong>${ticket.ticketid}</strong>:</p>
+              <div style="background: #f4f7fb; padding: 16px; border-radius: 8px; margin: 16px 0;">
+                <p style="margin: 0;">${comment}</p>
+              </div>
+              <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">View Ticket</a>
+              <br/><br/>
+              <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+            </div>
+          `
+        )
+      })
+    }
 
     res.status(201).json({ message: 'Comment added successfully!!' })
   } catch (err) {
