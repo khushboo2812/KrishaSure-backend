@@ -214,21 +214,29 @@ router.put('/:id/agent-details', authenticateToken, async (req, res) => {
     const userResult = await pool.query('SELECT * FROM Users WHERE id = $1 AND companyId = $2', [id, companyId])
     const user = userResult.rows[0]
 
-    if (!user || user.role !== 'agent') {
-      return res.status(400).json({ error: 'User is not an agent' })
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' })
     }
 
-    await pool.query(
-      'UPDATE Agents SET level = $1, skills = $2 WHERE email = $3 AND companyId = $4',
-      [level, skills, user.email, companyId]
-    )
+    const existingAgent = await pool.query('SELECT id FROM Agents WHERE email = $1 AND companyId = $2', [user.email, companyId])
+
+    if (existingAgent.rows.length > 0) {
+      await pool.query(
+        'UPDATE Agents SET level = $1, skills = $2 WHERE email = $3 AND companyId = $4',
+        [level, skills, user.email, companyId]
+      )
+    } else {
+      await pool.query(
+        'INSERT INTO Agents (name, email, level, skills, companyId) VALUES ($1, $2, $3, $4, $5)',
+        [user.name, user.email, level, skills, companyId]
+      )
+    }
 
     res.json({ message: 'Agent details updated successfully!!' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
-
 router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
