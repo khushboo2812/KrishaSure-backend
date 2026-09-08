@@ -144,4 +144,71 @@ router.put('/:id', authenticateToken, async (req, res) => {
   }
 })
 
+// POST reopen ticket
+router.post('/:id/reopen', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId } = req.user
+    const { name } = req.user
+
+    const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
+    const ticket = ticketResult.rows[0]
+
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' })
+    }
+
+    if (ticket.status !== 'Resolved') {
+      return res.status(400).json({ error: 'Only resolved tickets can be reopened' })
+    }
+
+    // Check if within 2 weeks
+    const resolvedDate = new Date(ticket.resolvedat)
+    const now = new Date()
+    const daysSinceResolved = (now - resolvedDate) / (1000 * 60 * 60 * 24)
+
+    if (daysSinceResolved > 14) {
+      return res.status(400).json({ error: 'This ticket cannot be reopened as it was resolved more than 2 weeks ago. Please create a new ticket.' })
+    }
+
+    // Reopen: keep same agent, change status back
+    await pool.query(
+      "UPDATE Tickets SET status = 'Open/Assigned' WHERE id = $1",
+      [id]
+    )
+
+    // Log the action
+    await pool.query(
+      'INSERT INTO TicketHistory (ticketId, action, performedBy) VALUES ($1, $2, $3)',
+      [id, 'Reopened', name]
+    )
+
+    // Notify everyone
+    const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = $1", [companyId])
+    const adminEmails = admins.rows.map(a => a.email).join(',')
+
+    const agentResult = await pool.query('SELECT email FROM Users WHERE name = $1 AND companyId = $2', [ticket.assignedto, companyId])
+    const agentEmail = agentResult.rows[0]?.email
+
+    sendEmail(
+      ticket.clientemail,
+      `Ticket ${ticket.ticketid} Reopened`,
+      `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #F59E0B;">Ticket Reopened</h1>
+          <p>Ticket <strong>${ticket.ticketid}</strong> has been reopened by ${name}.</p>
+          <p>It has been reassigned to <strong>${ticket.assignedto}</strong> for follow up.</p>
+          <br/>
+          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+        </div>
+      `,
+      agentEmail ? `${agentEmail},${adminEmails}` : adminEmails
+    )
+
+    res.json({ message: 'Ticket reopened successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router
