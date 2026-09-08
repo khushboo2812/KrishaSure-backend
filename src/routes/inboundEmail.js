@@ -95,9 +95,44 @@ router.post('/', async (req, res) => {
     const initialStatus = assignedTo ? 'Open/Assigned' : 'Open/Unassigned'
 
     await pool.query(
-      'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
-      [ticketId, subject || 'No subject', body, defaultCategory, defaultPriority, assignedTo, senderEmail, companyId, clientOrgId, initialStatus]
+      'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId, status, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+      [ticketId, subject || 'No subject', body, defaultCategory, defaultPriority, assignedTo, senderEmail, companyId, clientOrgId, initialStatus, 'email']
     )
+
+    const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = $1", [companyId])
+    const adminEmails = admins.rows.map(a => a.email).join(',')
+
+    if (assignedTo) {
+      const agentEmailResult = await pool.query(
+        'SELECT email FROM Users WHERE name = $1 AND companyId = $2',
+        [assignedTo, companyId]
+      )
+      const agentEmailAddress = agentEmailResult.rows[0]?.email
+
+      if (agentEmailAddress) {
+        sendEmail(
+          agentEmailAddress,
+          `New Ticket Assigned (via Email) - ${ticketId}`,
+          `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h1 style="color: #0A2540;">New Ticket - Auto-Created from Email</h1>
+              <p>This ticket was created automatically from an incoming email to support@krishasure.io, and auto-assigned to you.</p>
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticketId}</td></tr>
+                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>From</strong></td><td style="padding: 8px;">${senderEmail}</td></tr>
+                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Subject</strong></td><td style="padding: 8px;">${subject}</td></tr>
+                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Category / Priority</strong></td><td style="padding: 8px;">${defaultCategory} / ${defaultPriority} (default, not confirmed by client)</td></tr>
+              </table>
+              <p>Log in to KrishaSure to review the full message, adjust the category or priority, or reassign it to a different agent if it's not the right fit for you.</p>
+              <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
+              <br/><br/>
+              <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+            </div>
+          `,
+          adminEmails
+        )
+      }
+    }
 
     sendEmail(
       senderEmail,
@@ -111,7 +146,8 @@ router.post('/', async (req, res) => {
           <br/>
           <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
         </div>
-      `
+      `,
+      adminEmails
     )
 
     res.status(200).json({ ticketId })
