@@ -28,21 +28,29 @@ router.post('/:ticketId', authenticateToken, async (req, res) => {
       [ticketId, name, email, comment]
     )
 
-    // Get ticket details to know who to notify
     const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1', [ticketId])
     const ticket = ticketResult.rows[0]
 
     if (ticket) {
-      // Get assigned agent's email
       const agentResult = await pool.query(
         'SELECT email FROM Users WHERE name = $1 AND companyId = $2',
         [ticket.assignedto, ticket.companyid]
       )
       const agentEmail = agentResult.rows[0]?.email
 
+      // Get everyone who has commented before
+      const priorCommenters = await pool.query(
+        'SELECT DISTINCT authorEmail FROM TicketComments WHERE ticketId = $1',
+        [ticketId]
+      )
+
       const recipients = new Set()
-      if (ticket.clientemail && ticket.clientemail !== email) recipients.add(ticket.clientemail)
-      if (agentEmail && agentEmail !== email) recipients.add(agentEmail)
+      if (ticket.clientemail) recipients.add(ticket.clientemail)
+      if (agentEmail) recipients.add(agentEmail)
+      priorCommenters.rows.forEach(row => recipients.add(row.authoremail))
+
+      // Remove the current commenter (don't notify themselves)
+      recipients.delete(email)
 
       recipients.forEach(recipient => {
         sendEmail(
