@@ -46,11 +46,12 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     const ticketId = `KS-${String(nextNum).padStart(3, '0')}`
-    
-    await pool.query(
-      'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-      [ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId || null]
-    )
+const initialStatus = assignedTo ? 'Open/Assigned' : 'Open/Unassigned'
+
+await pool.query(
+  'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+  [ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId || null, initialStatus]
+)
 
     const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = $1", [companyId])
     const adminEmails = admins.rows.map(a => a.email).join(',')
