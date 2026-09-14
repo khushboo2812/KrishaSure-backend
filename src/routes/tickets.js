@@ -106,8 +106,8 @@ const agentEmail = agentResult.rows[0]?.email
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    const { companyId } = req.user
-    const { status, assignedTo, resolvedAt } = req.body
+    const { companyId, email } = req.user
+    const { status, assignedTo, resolvedAt, hoursSpent } = req.body
 
     const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
     const ticket = ticketResult.rows[0]
@@ -116,6 +116,13 @@ router.put('/:id', authenticateToken, async (req, res) => {
       'UPDATE Tickets SET status = $1, assignedTo = $2, resolvedAt = $3 WHERE id = $4 AND companyId = $5',
       [status, assignedTo, resolvedAt, id, companyId]
     )
+
+    if (status === "Resolved" && hoursSpent) {
+      await pool.query(
+        'INSERT INTO HoursLog (ticketId, hoursSpent, loggedBy) VALUES ($1, $2, $3)',
+        [id, hoursSpent, email]
+      )
+    }
 
     const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = $1", [companyId])
     const adminEmails = admins.rows.map(a => a.email).join(',')
