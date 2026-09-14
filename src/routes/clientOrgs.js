@@ -69,4 +69,42 @@ router.put('/:id', authenticateToken, async (req, res) => {
   }
 })
 
+router.get('/:id/hours-balance', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId } = req.user
+
+    const orgResult = await pool.query('SELECT * FROM ClientOrganizations WHERE id = $1 AND companyId = $2', [id, companyId])
+    const org = orgResult.rows[0]
+
+    if (!org || !org.hashourscontract) {
+      return res.json({ hasContract: false })
+    }
+
+    const usedResult = await pool.query(
+      `SELECT COALESCE(SUM(h.hoursSpent), 0) as totalUsed
+       FROM HoursLog h
+       JOIN Tickets t ON h.ticketId = t.id
+       WHERE t.clientOrgId = $1 AND h.loggedAt >= $2`,
+      [id, org.currentperiodstart]
+    )
+
+    const totalUsed = parseFloat(usedResult.rows[0].totalused)
+    const contracted = parseFloat(org.contractedhours)
+    const remaining = contracted - totalUsed
+
+    res.json({
+      hasContract: true,
+      contractedHours: contracted,
+      hoursUsed: totalUsed,
+      hoursRemaining: remaining > 0 ? remaining : 0,
+      overtimeHours: remaining < 0 ? Math.abs(remaining) : 0,
+      resetCadence: org.resetcadence,
+      currentPeriodStart: org.currentperiodstart
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router
