@@ -3,7 +3,7 @@ const router = express.Router()
 const bcrypt = require('bcryptjs')
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
-const { authenticateToken } = require('../middleware/auth')
+const { authenticateToken, requirePlatformOwner } = require('../middleware/auth')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -12,13 +12,6 @@ function generateTempPassword() {
     password += chars.charAt(Math.floor(Math.random() * chars.length))
   }
   return password
-}
-
-function requirePlatformOwner(req, res, next) {
-  if (req.user.role !== 'platform_owner') {
-    return res.status(403).json({ error: 'Access denied' })
-  }
-  next()
 }
 
 function generateTempPassword() {

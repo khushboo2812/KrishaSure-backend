@@ -15,23 +15,28 @@ function parseWindow(query, now = new Date()) {
   return { days, bucket, now, start }
 }
 
+// Small shared helper: index rows by their bucket's ISO timestamp.
+function indexByBucket(rows, mapValue) {
+  const byBucket = {}
+  rows.forEach(r => { byBucket[new Date(r.bucket).toISOString()] = mapValue(r) })
+  return byBucket
+}
+
 // Merges generate_series bucket rows with grouped "created" and
 // "resolved" query results into one zero-filled series, keyed by each
 // bucket's ISO timestamp so quiet buckets still appear (as zeros) rather
 // than being skipped, and slaCompliancePct is null rather than 0 when
-// nothing eligible was resolved in that bucket.
+// nothing eligible was resolved in that bucket. Used for both the
+// company-scoped and platform-wide ticket-trends reports — same shape,
+// the only difference is whether the underlying queries filter by
+// companyId.
 function buildTrendSeries(bucketRows, createdRows, resolvedRows) {
-  const createdByBucket = {}
-  createdRows.forEach(r => { createdByBucket[new Date(r.bucket).toISOString()] = parseInt(r.cnt) })
-
-  const resolvedByBucket = {}
-  resolvedRows.forEach(r => {
-    resolvedByBucket[new Date(r.bucket).toISOString()] = {
-      resolved: parseInt(r.resolvedcnt),
-      eligible: parseInt(r.eligiblecnt),
-      withinSla: parseInt(r.withinslacnt)
-    }
-  })
+  const createdByBucket = indexByBucket(createdRows, r => parseInt(r.cnt))
+  const resolvedByBucket = indexByBucket(resolvedRows, r => ({
+    resolved: parseInt(r.resolvedcnt),
+    eligible: parseInt(r.eligiblecnt),
+    withinSla: parseInt(r.withinslacnt)
+  }))
 
   return bucketRows.map(r => {
     const key = new Date(r.bucket).toISOString()
@@ -47,4 +52,20 @@ function buildTrendSeries(bucketRows, createdRows, resolvedRows) {
   })
 }
 
-module.exports = { VALID_BUCKETS, parseWindow, buildTrendSeries }
+// Same zero-fill pattern as buildTrendSeries, for the platform-wide
+// signups-vs-verifications report.
+function buildSignupsSeries(bucketRows, signupRows, verifiedRows) {
+  const signupsByBucket = indexByBucket(signupRows, r => parseInt(r.cnt))
+  const verifiedByBucket = indexByBucket(verifiedRows, r => parseInt(r.cnt))
+
+  return bucketRows.map(r => {
+    const key = new Date(r.bucket).toISOString()
+    return {
+      date: key,
+      signups: signupsByBucket[key] || 0,
+      verifications: verifiedByBucket[key] || 0
+    }
+  })
+}
+
+module.exports = { VALID_BUCKETS, parseWindow, buildTrendSeries, buildSignupsSeries }
