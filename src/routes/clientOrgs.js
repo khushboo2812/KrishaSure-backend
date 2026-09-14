@@ -16,10 +16,12 @@ router.get('/', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
-    const { name } = req.body
+    const { name, hasHoursContract, contractedHours, resetCadence, overtimeHandling } = req.body
+
     await pool.query(
-      'INSERT INTO ClientOrganizations (name, companyId) VALUES ($1, $2)',
-      [name, companyId]
+      `INSERT INTO ClientOrganizations (name, companyId, hasHoursContract, contractedHours, resetCadence, overtimeHandling, currentPeriodStart) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [name, companyId, hasHoursContract || false, contractedHours || null, resetCadence || null, overtimeHandling || null, hasHoursContract ? new Date() : null]
     )
     res.status(201).json({ message: 'Client organization created successfully!!' })
   } catch (err) {
