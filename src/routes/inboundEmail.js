@@ -52,9 +52,9 @@ router.post('/', async (req, res) => {
     const senderEmail = from.includes('<') ? from.match(/<(.+)>/)[1] : from
     const body = generateTicketBodyFromEmail(email.text, email.html)
 
-    const userResult = await pool.query('SELECT * FROM Users WHERE email = $1', [senderEmail])
+    const personResult = await pool.query('SELECT * FROM People WHERE email = $1', [senderEmail])
 
-    if (userResult.rows.length === 0) {
+    if (personResult.rows.length === 0) {
       sendEmail(
         senderEmail,
         'Unable to create ticket',
@@ -69,9 +69,59 @@ router.post('/', async (req, res) => {
       return res.status(200).json({ handled: 'unknown_sender' })
     }
 
-    const user = userResult.rows[0]
-    const companyId = user.companyid
-    const clientOrgId = user.clientorgid || null
+    const person = personResult.rows[0]
+
+    // Raising a ticket by email is a client-role action, so what
+    // matters here is how many *client* memberships this person has —
+    // not their total membership count. A person can freely hold one
+    // client membership in Company A and, say, an admin membership in
+    // Company B (exactly the multi-company-identity scenario this
+    // schema exists for) and still email a ticket in unambiguously: the
+    // one client membership is the answer. Only two or more client
+    // memberships are genuinely ambiguous — the email address alone
+    // can't say which company this ticket is for, so this is flagged
+    // for manual triage rather than guessed.
+    const membershipsResult = await pool.query(
+      `SELECT m.companyId, m.clientOrgId FROM Memberships m WHERE m.personId = $1 AND m.role = 'client'`,
+      [person.id]
+    )
+    const clientMemberships = membershipsResult.rows
+
+    if (clientMemberships.length === 0) {
+      sendEmail(
+        senderEmail,
+        'Unable to create ticket',
+        `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
+            <p>This email address isn't set up as a client contact with KrishaSure. Please contact your account administrator, or log in directly to raise a ticket.</p>
+            <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          </div>
+        `
+      )
+      return res.status(200).json({ handled: 'no_client_membership' })
+    }
+
+    if (clientMemberships.length > 1) {
+      sendEmail(
+        senderEmail,
+        'Unable to create ticket automatically',
+        `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h1 style="color: #DC2626;">We couldn't create a ticket automatically</h1>
+            <p>Your email address is registered as a client contact with more than one company on KrishaSure, so we can't tell which one this ticket is for.</p>
+            <p>Please log in and raise the ticket directly so you can pick the right company.</p>
+            <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
+            <br/><br/>
+            <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          </div>
+        `
+      )
+      return res.status(200).json({ handled: 'ambiguous_sender' })
+    }
+
+    const companyId = clientMemberships[0].companyid
+    const clientOrgId = clientMemberships[0].clientorgid || null
 
     const categoriesResult = await pool.query("SELECT * FROM Categories WHERE companyId = $1 AND name = 'General' LIMIT 1", [companyId])
 let defaultCategory = categoriesResult.rows[0]?.name
@@ -104,7 +154,10 @@ if (!defaultCategory) {
       [ticketId, subject || 'No subject', body, defaultCategory, defaultPriority, assignedTo, senderEmail, companyId, clientOrgId, initialStatus, 'email']
     )
 
-    const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin', 'platform_owner') AND companyId = $1", [companyId])
+    const admins = await pool.query(
+      `SELECT p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.role IN ('superadmin', 'admin', 'platform_owner') AND m.companyId = $1`,
+      [companyId]
+    )
     const adminEmails = admins.rows.map(a => a.email).join(',')
 
     if (assignedTo) {

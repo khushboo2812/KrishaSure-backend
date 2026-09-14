@@ -54,7 +54,7 @@ const insertResult = await pool.query(
 )
 const newTicketDbId = insertResult.rows[0].id
 
-    const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = $1", [companyId])
+    const admins = await pool.query("SELECT p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.role IN ('superadmin', 'admin') AND m.companyId = $1", [companyId])
     const adminEmails = admins.rows.map(a => a.email).join(',')
 
     const agentResult = await pool.query('SELECT email FROM Agents WHERE name = $1 AND companyId = $2', [assignedTo, companyId])
@@ -124,7 +124,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
       )
     }
 
-    const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = $1", [companyId])
+    const admins = await pool.query("SELECT p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.role IN ('superadmin', 'admin') AND m.companyId = $1", [companyId])
     const adminEmails = admins.rows.map(a => a.email).join(',')
 
     if (status === "Resolved" && ticket) {
@@ -192,10 +192,13 @@ router.post('/:id/reopen', authenticateToken, async (req, res) => {
     )
 
     // Notify everyone
-    const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = $1", [companyId])
+    const admins = await pool.query("SELECT p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.role IN ('superadmin', 'admin') AND m.companyId = $1", [companyId])
     const adminEmails = admins.rows.map(a => a.email).join(',')
 
-    const agentResult = await pool.query('SELECT email FROM Users WHERE name = $1 AND companyId = $2', [ticket.assignedto, companyId])
+    const agentResult = await pool.query(
+      `SELECT p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE p.name = $1 AND m.companyId = $2`,
+      [ticket.assignedto, companyId]
+    )
     const agentEmail = agentResult.rows[0]?.email
 
     sendEmail(
