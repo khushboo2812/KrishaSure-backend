@@ -48,10 +48,11 @@ router.post('/', authenticateToken, async (req, res) => {
     const ticketId = `KS-${String(nextNum).padStart(3, '0')}`
 const initialStatus = assignedTo ? 'Open/Assigned' : 'Open/Unassigned'
 
-await pool.query(
-  'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+const insertResult = await pool.query(
+  'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
   [ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId || null, initialStatus]
 )
+const newTicketDbId = insertResult.rows[0].id
 
     const admins = await pool.query("SELECT email FROM Users WHERE role IN ('superadmin', 'admin') AND companyId = $1", [companyId])
     const adminEmails = admins.rows.map(a => a.email).join(',')
@@ -96,7 +97,7 @@ const agentEmail = agentResult.rows[0]?.email
       )
     }
 
-    res.status(201).json({ message: 'Ticket created successfully!!', ticketId })
+    res.status(201).json({ message: 'Ticket created successfully!!', ticketId, id: newTicketDbId })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
