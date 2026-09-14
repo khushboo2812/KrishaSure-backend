@@ -19,20 +19,22 @@ router.post('/request', async (req, res) => {
   try {
     const { email } = req.body
 
-    const result = await pool.query('SELECT * FROM Users WHERE email = $1', [email])
-    
+    const result = await pool.query('SELECT * FROM People WHERE email = $1', [email])
+
     if (result.rows.length === 0) {
       // Don't reveal if email exists or not (security best practice)
       return res.json({ message: 'If this email exists, a reset link has been sent.' })
     }
 
-    const user = result.rows[0]
+    const person = result.rows[0]
     const tempPassword = generateTempPassword()
     const hashedPassword = await bcrypt.hash(tempPassword, 10)
 
+    // One password per person across every membership — resetting it
+    // here resets access for all of them, same as changing it any other way.
     await pool.query(
-      'UPDATE Users SET password = $1, mustChangePassword = true WHERE id = $2',
-      [hashedPassword, user.id]
+      'UPDATE People SET password = $1, mustChangePassword = true WHERE id = $2',
+      [hashedPassword, person.id]
     )
 
     sendEmail(
@@ -41,7 +43,7 @@ router.post('/request', async (req, res) => {
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h1 style="color: #0A2540;">Password Reset Request</h1>
-          <p>Hi ${user.name},</p>
+          <p>Hi ${person.name},</p>
           <p>We received a request to reset your password.</p>
           <p><strong>Your new temporary password:</strong> ${tempPassword}</p>
           <p>Please login and change this password immediately!!</p>

@@ -102,16 +102,24 @@ router.get('/signups-trend', async (req, res) => {
       [bucket, start, now]
     )
 
+    // A person counts as a "signup"/"verification" unless one of their
+    // memberships is platform_owner — there's only ever one, not a
+    // meaningful trend signal, and a person could in principle also
+    // hold other memberships alongside it.
     const signupsResult = await pool.query(
-      `SELECT date_trunc($1, createdAt) AS bucket, COUNT(*) AS cnt
-       FROM Users WHERE createdAt >= $2 AND role != 'platform_owner'
+      `SELECT date_trunc($1, p.createdAt) AS bucket, COUNT(*) AS cnt
+       FROM People p
+       WHERE p.createdAt >= $2
+         AND NOT EXISTS (SELECT 1 FROM Memberships m WHERE m.personId = p.id AND m.role = 'platform_owner')
        GROUP BY 1`,
       [bucket, start]
     )
 
     const verifiedResult = await pool.query(
-      `SELECT date_trunc($1, emailVerifiedAt) AS bucket, COUNT(*) AS cnt
-       FROM Users WHERE emailVerifiedAt >= $2 AND role != 'platform_owner'
+      `SELECT date_trunc($1, p.emailVerifiedAt) AS bucket, COUNT(*) AS cnt
+       FROM People p
+       WHERE p.emailVerifiedAt >= $2
+         AND NOT EXISTS (SELECT 1 FROM Memberships m WHERE m.personId = p.id AND m.role = 'platform_owner')
        GROUP BY 1`,
       [bucket, start]
     )
