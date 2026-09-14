@@ -40,10 +40,23 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   }
 })
 
+// Contract terms are considered changed if hasHoursContract flips, or (while
+// under contract, before or after the edit) contractedHours, resetCadence,
+// or overtimeHandling differ. A plain rename alone never counts.
+function contractTermsChanged(org, next) {
+  const toHours = v => (v === null || v === undefined || v === '') ? null : parseFloat(v)
+  const toText = v => v === undefined ? null : v
+
+  return !!org.hashourscontract !== !!next.hasHoursContract ||
+    toHours(org.contractedhours) !== toHours(next.contractedHours) ||
+    toText(org.resetcadence) !== toText(next.resetCadence) ||
+    toText(org.overtimehandling) !== toText(next.overtimeHandling)
+}
+
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    const { companyId } = req.user
+    const { companyId, email } = req.user
     const { name, hasHoursContract, contractedHours, resetCadence, overtimeHandling } = req.body
 
     const existing = await pool.query('SELECT * FROM ClientOrganizations WHERE id = $1 AND companyId = $2', [id, companyId])
@@ -56,8 +69,16 @@ router.put('/:id', authenticateToken, async (req, res) => {
     // If a contract is being turned on for the first time, start the period now
     const periodStart = (hasHoursContract && !org.hashourscontract) ? new Date() : org.currentperiodstart
 
+    if (contractTermsChanged(org, { hasHoursContract, contractedHours, resetCadence, overtimeHandling })) {
+      await pool.query(
+        `INSERT INTO ClientContractHistory (clientOrgId, previousContractedHours, previousResetCadence, previousOvertimeHandling, changedBy)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [id, org.contractedhours, org.resetcadence, org.overtimehandling, email]
+      )
+    }
+
     await pool.query(
-      `UPDATE ClientOrganizations 
+      `UPDATE ClientOrganizations
        SET name = $1, hasHoursContract = $2, contractedHours = $3, resetCadence = $4, overtimeHandling = $5, currentPeriodStart = $6
        WHERE id = $7 AND companyId = $8`,
       [name, hasHoursContract, contractedHours || null, resetCadence || null, overtimeHandling || null, hasHoursContract ? periodStart : null, id, companyId]
