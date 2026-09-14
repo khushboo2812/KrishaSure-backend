@@ -11,7 +11,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 router.post('/:ticketId', authenticateToken, upload.single('file'), async (req, res) => {
   try {
     const { ticketId } = req.params
-    const { name } = req.user
+    const { email } = req.user
     const file = req.file
 
     if (!file) {
@@ -31,7 +31,7 @@ router.post('/:ticketId', authenticateToken, upload.single('file'), async (req, 
 
     await pool.query(
       'INSERT INTO TicketAttachments (ticketId, fileName, storagePath, fileSize, uploadedBy, source) VALUES ($1, $2, $3, $4, $5, $6)',
-      [ticketId, file.originalname, storagePath, file.size, name, 'app']
+      [ticketId, file.originalname, storagePath, file.size, email, 'app']
     )
 
     res.status(201).json({ message: 'File uploaded successfully!!' })
@@ -72,6 +72,38 @@ router.get('/download/:attachmentId', authenticateToken, async (req, res) => {
     }
 
     res.json({ url: data.signedUrl, fileName: attachment.filename })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.delete('/:attachmentId', authenticateToken, async (req, res) => {
+  try {
+    const { attachmentId } = req.params
+    const { email } = req.user
+
+        const result = await pool.query('SELECT * FROM TicketAttachments WHERE id = $1', [attachmentId])
+    const attachment = result.rows[0]
+
+    if (!attachment) {
+      return res.status(404).json({ error: 'Attachment not found' })
+    }
+
+    if (attachment.uploadedby !== email) {
+      return res.status(403).json({ error: 'You can only delete attachments you uploaded' })
+    }
+
+    const { error: storageError } = await supabase.storage
+      .from('ticket-attachments')
+      .remove([attachment.storagepath])
+
+    if (storageError) {
+      console.error('Failed to delete from storage:', storageError.message)
+    }
+
+    await pool.query('DELETE FROM TicketAttachments WHERE id = $1', [attachmentId])
+
+    res.json({ message: 'Attachment deleted successfully!!' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
