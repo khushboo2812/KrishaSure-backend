@@ -70,4 +70,39 @@ async function advancePeriodIfDue(pool, org, now = new Date()) {
   return { ...org, currentperiodstart: periodStart, carriedoverhours: carriedOverHours }
 }
 
-module.exports = { isContractActive, advancePeriodIfDue }
+// Computes an active, already-rolled-forward org's current-period balance.
+// Call advancePeriodIfDue first — this just reads currentperiodstart/
+// carriedoverhours off whatever org row you pass in, it doesn't advance
+// anything itself. Shared by the per-company hours-balance endpoint and
+// the platform-wide MSP overtime report, so both agree on one definition
+// of "currently in overtime."
+async function computeOrgBalance(pool, org) {
+  const usedResult = await pool.query(
+    `SELECT COALESCE(SUM(h.hoursSpent), 0) as totalUsed
+     FROM HoursLog h
+     JOIN Tickets t ON h.ticketId = t.id
+     WHERE t.clientOrgId = $1 AND h.loggedAt >= $2`,
+    [org.id, org.currentperiodstart]
+  )
+
+  const totalUsed = parseFloat(usedResult.rows[0].totalused)
+  const contractedHours = parseFloat(org.contractedhours)
+  const carriedOverHours = parseFloat(org.carriedoverhours || 0)
+  // A rolled-over debt eats into this period's allowance; "Settle
+  // separately" orgs always have carriedOverHours at 0, so this is a
+  // no-op for them.
+  const remaining = (contractedHours - carriedOverHours) - totalUsed
+
+  return {
+    contractedHours,
+    carriedOverHours,
+    hoursUsed: totalUsed,
+    hoursRemaining: remaining > 0 ? remaining : 0,
+    overtimeHours: remaining < 0 ? Math.abs(remaining) : 0,
+    resetCadence: org.resetcadence,
+    currentPeriodStart: org.currentperiodstart,
+    contractEndDate: org.contractenddate
+  }
+}
+
+module.exports = { isContractActive, advancePeriodIfDue, computeOrgBalance }

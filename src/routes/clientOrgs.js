@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 const { pool } = require('../config/db')
 const { authenticateToken } = require('../middleware/auth')
-const { isContractActive, advancePeriodIfDue } = require('../utils/contractPeriod')
+const { isContractActive, advancePeriodIfDue, computeOrgBalance } = require('../utils/contractPeriod')
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -112,34 +112,9 @@ router.get('/:id/hours-balance', authenticateToken, async (req, res) => {
     // periods before computing usage, applying overtimeHandling at each
     // boundary (see src/utils/contractPeriod.js).
     org = await advancePeriodIfDue(pool, org)
+    const balance = await computeOrgBalance(pool, org)
 
-    const usedResult = await pool.query(
-      `SELECT COALESCE(SUM(h.hoursSpent), 0) as totalUsed
-       FROM HoursLog h
-       JOIN Tickets t ON h.ticketId = t.id
-       WHERE t.clientOrgId = $1 AND h.loggedAt >= $2`,
-      [id, org.currentperiodstart]
-    )
-
-    const totalUsed = parseFloat(usedResult.rows[0].totalused)
-    const contracted = parseFloat(org.contractedhours)
-    const carriedOverHours = parseFloat(org.carriedoverhours || 0)
-    // A rolled-over debt eats into this period's allowance; "Settle
-    // separately" orgs always have carriedOverHours at 0, so this is a
-    // no-op for them.
-    const remaining = (contracted - carriedOverHours) - totalUsed
-
-    res.json({
-      hasContract: true,
-      contractedHours: contracted,
-      carriedOverHours,
-      hoursUsed: totalUsed,
-      hoursRemaining: remaining > 0 ? remaining : 0,
-      overtimeHours: remaining < 0 ? Math.abs(remaining) : 0,
-      resetCadence: org.resetcadence,
-      currentPeriodStart: org.currentperiodstart,
-      contractEndDate: org.contractenddate
-    })
+    res.json({ hasContract: true, ...balance })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

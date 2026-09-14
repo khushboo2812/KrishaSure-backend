@@ -17,4 +17,11 @@ function authenticateToken(req, res, next) {
   })
 }
 
-module.exports = { authenticateToken }
+function requirePlatformOwner(req, res, next) {
+  if (req.user.role !== 'platform_owner') {
+    return res.status(403).json({ error: 'Access denied' })
+  }
+  next()
+}
+
+module.exports = { authenticateToken, requirePlatformOwner }

@@ -142,7 +142,7 @@ router.post('/verify/:token/confirm', async (req, res) => {
     }
 
     await pool.query(
-      'UPDATE Users SET emailVerified = true, verificationToken = NULL WHERE id = $1',
+      'UPDATE Users SET emailVerified = true, emailVerifiedAt = NOW(), verificationToken = NULL WHERE id = $1',
       [user.id]
     )
 
