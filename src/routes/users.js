@@ -5,6 +5,7 @@ const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 const { authenticateToken } = require('../middleware/auth')
 const { getTicketReplyFromAddress } = require('../utils/supportEmail')
+const { generateVerificationToken } = require('../utils/verificationToken')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -65,7 +66,7 @@ router.post('/', authenticateToken, async (req, res) => {
 
     const tempPassword = generateTempPassword()
     const hashedPassword = await bcrypt.hash(tempPassword, 10)
-    const verificationToken = generateTempPassword() + generateTempPassword()
+    const verificationToken = generateVerificationToken()
 
     const personResult = await pool.query(
       `INSERT INTO People (name, email, password, emailVerified, verificationToken, verificationTokenExpiry)
@@ -312,7 +313,7 @@ router.post('/:id/resend-verification', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'This user has already verified their email' })
     }
 
-    const verificationToken = generateTempPassword() + generateTempPassword()
+    const verificationToken = generateVerificationToken()
 
     await pool.query(
       "UPDATE People SET verificationToken = $1, verificationTokenExpiry = NOW() + INTERVAL '24 hours' WHERE id = $2",
