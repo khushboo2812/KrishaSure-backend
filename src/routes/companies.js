@@ -238,4 +238,62 @@ router.post('/:id/support-email', authenticateToken, requirePlatformOwner, async
   }
 })
 
+// DELETE a company permanently — unlike isActive (which keeps the
+// company and all its data intact and just gates access), this
+// actually removes it, so it's refused outright unless the company has
+// zero tickets ever created: the one real record of a company having
+// been in genuine use. Its scaffolding (default Categories, SLARules,
+// its superadmin's Membership, any Agents/ClientOrganizations rows) is
+// cascade-deleted with it, but never the underlying People rows — a
+// person whose only membership was here keeps their account, same
+// principle as deleting a single membership elsewhere in this app.
+//
+// Requires the calling platform owner's own current password as a
+// confirmation step, verified the same way login verifies it — this
+// never touches the company admin's password, only the platform
+// owner's own.
+router.delete('/:id', authenticateToken, requirePlatformOwner, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { password } = req.body
+
+    if (!password) {
+      return res.status(400).json({ error: 'Password confirmation is required to delete a company' })
+    }
+
+    const callerResult = await pool.query('SELECT * FROM People WHERE id = $1', [req.user.personId])
+    const caller = callerResult.rows[0]
+    if (!caller) {
+      return res.status(404).json({ error: 'Account not found' })
+    }
+
+    const passwordMatches = await bcrypt.compare(password, caller.password)
+    if (!passwordMatches) {
+      return res.status(401).json({ error: 'Incorrect password' })
+    }
+
+    const companyResult = await pool.query('SELECT * FROM Companies WHERE id = $1', [id])
+    const company = companyResult.rows[0]
+    if (!company) {
+      return res.status(404).json({ error: 'Company not found' })
+    }
+
+    const ticketCount = await pool.query('SELECT COUNT(*) FROM Tickets WHERE companyId = $1', [id])
+    if (parseInt(ticketCount.rows[0].count) > 0) {
+      return res.status(400).json({ error: 'This company has tickets on record and cannot be deleted. Disable it instead.' })
+    }
+
+    await pool.query('DELETE FROM Memberships WHERE companyId = $1', [id])
+    await pool.query('DELETE FROM Agents WHERE companyId = $1', [id])
+    await pool.query('DELETE FROM ClientOrganizations WHERE companyId = $1', [id])
+    await pool.query('DELETE FROM SLARules WHERE companyId = $1', [id])
+    await pool.query('DELETE FROM Categories WHERE companyId = $1', [id])
+    await pool.query('DELETE FROM Companies WHERE id = $1', [id])
+
+    res.json({ message: `${company.name} deleted successfully!!` })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router

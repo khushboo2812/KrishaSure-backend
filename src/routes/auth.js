@@ -3,13 +3,13 @@ const router = express.Router()
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const { pool } = require('../config/db')
-const { authenticateToken, INACTIVE_COMPANY_MESSAGE } = require('../middleware/auth')
+const { authenticateToken, INACTIVE_COMPANY_MESSAGE, INACTIVE_MEMBERSHIP_MESSAGE } = require('../middleware/auth')
 
 const JWT_SECRET = process.env.JWT_SECRET || 'krishasure_secret'
 
 async function getMemberships(personId) {
   const result = await pool.query(
-    `SELECT m.id, m.role, m.companyId, m.clientOrgId, c.name AS companyName, c.isActive AS companyActive
+    `SELECT m.id, m.role, m.companyId, m.clientOrgId, c.name AS companyName, c.isActive AS companyActive, m.isActive AS membershipActive
      FROM Memberships m
      JOIN Companies c ON m.companyId = c.id
      WHERE m.personId = $1
@@ -22,9 +22,12 @@ async function getMemberships(personId) {
     companyId: r.companyid,
     companyName: r.companyname,
     clientOrgId: r.clientorgid,
-    // platform_owner is exempt from company-active gating everywhere
-    // else in this app, so treat their membership as always usable too.
-    usable: r.role === 'platform_owner' || r.companyactive
+    companyActive: r.companyactive,
+    membershipActive: r.membershipactive,
+    // platform_owner is exempt from company-active AND membership-active
+    // gating everywhere else in this app, so treat their membership as
+    // always usable too.
+    usable: r.role === 'platform_owner' || (r.companyactive && r.membershipactive)
   }))
 }
 
@@ -93,7 +96,12 @@ router.post('/login', async (req, res) => {
     const usableMemberships = memberships.filter(m => m.usable)
 
     if (usableMemberships.length === 0) {
-      return res.status(403).json({ error: INACTIVE_COMPANY_MESSAGE })
+      // Could be unusable because the company is disabled, because this
+      // specific membership was deactivated, or a mix across several —
+      // company-inactive is the more actionable thing to surface if
+      // either applies to any of them.
+      const anyCompanyInactive = memberships.some(m => m.companyActive === false)
+      return res.status(403).json({ error: anyCompanyInactive ? INACTIVE_COMPANY_MESSAGE : INACTIVE_MEMBERSHIP_MESSAGE })
     }
 
     if (usableMemberships.length === 1) {
@@ -140,7 +148,7 @@ router.post('/select-membership', async (req, res) => {
       return res.status(403).json({ error: 'That membership does not belong to this account' })
     }
     if (!chosen.usable) {
-      return res.status(403).json({ error: INACTIVE_COMPANY_MESSAGE })
+      return res.status(403).json({ error: chosen.companyActive === false ? INACTIVE_COMPANY_MESSAGE : INACTIVE_MEMBERSHIP_MESSAGE })
     }
 
     res.json(issueSession(person, chosen, memberships))
@@ -181,7 +189,7 @@ router.post('/switch-membership', authenticateToken, async (req, res) => {
     // covers the *target* membership being switched into, which could
     // belong to a different, disabled company.
     if (!chosen.usable) {
-      return res.status(403).json({ error: INACTIVE_COMPANY_MESSAGE })
+      return res.status(403).json({ error: chosen.companyActive === false ? INACTIVE_COMPANY_MESSAGE : INACTIVE_MEMBERSHIP_MESSAGE })
     }
 
     res.json(issueSession(person, chosen, memberships))

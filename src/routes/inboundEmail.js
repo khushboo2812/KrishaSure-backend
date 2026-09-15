@@ -290,7 +290,16 @@ if (!defaultCategory) {
 }
     const defaultPriority = 'Medium'
 
-    const agentsResult = await pool.query('SELECT * FROM Agents WHERE companyId = $1', [companyId])
+    // Auto-assignment must never pick a deactivated agent — unlike
+    // agents.js's own GET /, there's no frontend here to filter this
+    // itself, so it's excluded directly in the query.
+    const agentsResult = await pool.query(
+      `SELECT a.* FROM Agents a
+       JOIN People p ON p.email = a.email
+       JOIN Memberships m ON m.personId = p.id AND m.companyId = a.companyId
+       WHERE a.companyId = $1 AND m.isActive = true`,
+      [companyId]
+    )
     const ticketsResult = await pool.query('SELECT * FROM Tickets WHERE companyId = $1', [companyId])
     const assignedTo = autoAssignAgent(agentsResult.rows, ticketsResult.rows, defaultCategory, defaultPriority)
 

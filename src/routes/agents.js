@@ -6,7 +6,21 @@ const { authenticateToken } = require('../middleware/auth')
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
-    const result = await pool.query('SELECT * FROM Agents WHERE companyId = $1 ORDER BY name', [companyId])
+    // isActive comes from this agent's Membership (via People), not the
+    // Agents row itself — exposed as data rather than filtered out here,
+    // since this list is also used for management/display, not just
+    // picking who a new ticket can go to. Callers doing assignment
+    // (auto-assign, the manual assign dropdown) are the ones that
+    // should exclude inactive agents.
+    const result = await pool.query(
+      `SELECT a.*, m.isActive
+       FROM Agents a
+       JOIN People p ON p.email = a.email
+       JOIN Memberships m ON m.personId = p.id AND m.companyId = a.companyId
+       WHERE a.companyId = $1
+       ORDER BY a.name`,
+      [companyId]
+    )
     res.json(result.rows)
   } catch (err) {
     res.status(500).json({ error: err.message })
