@@ -88,6 +88,12 @@ function autoAssignAgent(agents, ticketList, category, priority) {
 }
 
 router.post('/', async (req, res) => {
+  // Hoisted so the catch block below can still bounce the sender even
+  // if the crash happens after this is set but before a ticket exists —
+  // previously an unexpected error meant the sender got no feedback at
+  // all, same as every other unhandled-failure gap this app avoids
+  // everywhere else in this file.
+  let senderEmail = null
   try {
     const payload = req.body
     if (payload.type !== 'email.received') {
@@ -95,6 +101,7 @@ router.post('/', async (req, res) => {
     }
 
     const { email_id, from, to, subject } = payload.data
+    senderEmail = from.includes('<') ? from.match(/<(.+)>/)[1] : from
 
     const { data: email, error } = await resend.emails.receiving.get(email_id)
     if (error) {
@@ -102,7 +109,6 @@ router.post('/', async (req, res) => {
       return res.status(200).json({ error: 'fetch_failed' })
     }
 
-    const senderEmail = from.includes('<') ? from.match(/<(.+)>/)[1] : from
     const body = generateTicketBodyFromEmail(email.text, email.html)
 
     const personResult = await pool.query('SELECT * FROM People WHERE LOWER(email) = LOWER($1)', [senderEmail])
@@ -353,6 +359,19 @@ if (!defaultCategory) {
     res.status(200).json({ ticketId })
   } catch (err) {
     console.error('Inbound email error:', err.message)
+    if (senderEmail) {
+      sendEmail(
+        senderEmail,
+        'Unable to create ticket',
+        `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
+            <p>Something went wrong on our end while processing your email. Please try again, or log in directly to raise a ticket.</p>
+            <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          </div>
+        `
+      )
+    }
     res.status(500).json({ error: err.message })
   }
 })
