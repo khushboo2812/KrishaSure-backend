@@ -3,6 +3,7 @@ const router = express.Router()
 const { Resend } = require('resend')
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
+const { INACTIVE_COMPANY_MESSAGE } = require('../middleware/auth')
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
@@ -122,6 +123,26 @@ router.post('/', async (req, res) => {
 
     const companyId = clientMemberships[0].companyid
     const clientOrgId = clientMemberships[0].clientorgid || null
+
+    // A disabled company shouldn't accumulate tickets nobody there can
+    // log in to see — same underlying "no activity while disabled"
+    // principle as the login/mid-session gates, just via email instead
+    // of the app.
+    const companyResult = await pool.query('SELECT isActive FROM Companies WHERE id = $1', [companyId])
+    if (!companyResult.rows[0] || !companyResult.rows[0].isactive) {
+      sendEmail(
+        senderEmail,
+        'Unable to create ticket',
+        `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
+            <p>${INACTIVE_COMPANY_MESSAGE}.</p>
+            <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          </div>
+        `
+      )
+      return res.status(200).json({ handled: 'company_inactive' })
+    }
 
     const categoriesResult = await pool.query("SELECT * FROM Categories WHERE companyId = $1 AND name = 'General' LIMIT 1", [companyId])
 let defaultCategory = categoriesResult.rows[0]?.name
