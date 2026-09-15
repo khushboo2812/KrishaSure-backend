@@ -3,13 +3,13 @@ const router = express.Router()
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const { pool } = require('../config/db')
-const { authenticateToken } = require('../middleware/auth')
+const { authenticateToken, INACTIVE_COMPANY_MESSAGE } = require('../middleware/auth')
 
 const JWT_SECRET = process.env.JWT_SECRET || 'krishasure_secret'
 
 async function getMemberships(personId) {
   const result = await pool.query(
-    `SELECT m.id, m.role, m.companyId, m.clientOrgId, c.name AS companyName
+    `SELECT m.id, m.role, m.companyId, m.clientOrgId, c.name AS companyName, c.isActive AS companyActive
      FROM Memberships m
      JOIN Companies c ON m.companyId = c.id
      WHERE m.personId = $1
@@ -21,7 +21,10 @@ async function getMemberships(personId) {
     role: r.role,
     companyId: r.companyid,
     companyName: r.companyname,
-    clientOrgId: r.clientorgid
+    clientOrgId: r.clientorgid,
+    // platform_owner is exempt from company-active gating everywhere
+    // else in this app, so treat their membership as always usable too.
+    usable: r.role === 'platform_owner' || r.companyactive
   }))
 }
 
@@ -83,16 +86,26 @@ router.post('/login', async (req, res) => {
       return res.status(403).json({ error: 'This account has no company access. Contact your administrator.' })
     }
 
-    if (memberships.length === 1) {
-      return res.json(issueSession(person, memberships[0], memberships))
+    // A membership in a disabled company isn't offered as a login
+    // option at all — filtered out here rather than shown and left to
+    // fail if picked, same principle as the mid-session gate in
+    // middleware/auth.js applied one step earlier.
+    const usableMemberships = memberships.filter(m => m.usable)
+
+    if (usableMemberships.length === 0) {
+      return res.status(403).json({ error: INACTIVE_COMPANY_MESSAGE })
     }
 
-    // More than one membership: don't issue a full session token yet —
-    // the frontend needs to show a picker first. This short-lived token
-    // only proves "this is person X, already password-verified" to
-    // /select-membership, so the password never needs to be re-sent.
+    if (usableMemberships.length === 1) {
+      return res.json(issueSession(person, usableMemberships[0], memberships))
+    }
+
+    // More than one usable membership: don't issue a full session token
+    // yet — the frontend needs to show a picker first. This short-lived
+    // token only proves "this is person X, already password-verified"
+    // to /select-membership, so the password never needs to be re-sent.
     const selectToken = jwt.sign({ personId: person.id, purpose: 'select-membership' }, JWT_SECRET, { expiresIn: '5m' })
-    res.json({ requiresMembershipSelection: true, selectToken, memberships })
+    res.json({ requiresMembershipSelection: true, selectToken, memberships: usableMemberships })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -125,6 +138,9 @@ router.post('/select-membership', async (req, res) => {
     const chosen = memberships.find(m => m.membershipId === membershipId)
     if (!chosen) {
       return res.status(403).json({ error: 'That membership does not belong to this account' })
+    }
+    if (!chosen.usable) {
+      return res.status(403).json({ error: INACTIVE_COMPANY_MESSAGE })
     }
 
     res.json(issueSession(person, chosen, memberships))
@@ -159,6 +175,13 @@ router.post('/switch-membership', authenticateToken, async (req, res) => {
     const chosen = memberships.find(m => m.membershipId === membershipId)
     if (!chosen) {
       return res.status(403).json({ error: 'That membership does not belong to this account' })
+    }
+    // authenticateToken already confirmed the *current* session's
+    // company is active (or the caller is platform_owner) — this
+    // covers the *target* membership being switched into, which could
+    // belong to a different, disabled company.
+    if (!chosen.usable) {
+      return res.status(403).json({ error: INACTIVE_COMPANY_MESSAGE })
     }
 
     res.json(issueSession(person, chosen, memberships))

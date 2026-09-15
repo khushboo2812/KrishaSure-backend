@@ -180,4 +180,31 @@ router.post('/:id/resend-welcome', authenticateToken, requirePlatformOwner, asyn
   }
 })
 
+// PUT toggle a company's active status. The company and all its data
+// stay completely intact either way — this only gates login (see
+// routes/auth.js) and mid-session access (see middleware/auth.js),
+// plus inbound email ticket creation (see routes/inboundEmail.js).
+// platform_owner is exempt from all of those gates everywhere else in
+// this app, so toggling isActive here never affects a platform owner's
+// own access, including to whichever company they belong to.
+router.put('/:id/active', authenticateToken, requirePlatformOwner, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { isActive } = req.body
+
+    const result = await pool.query(
+      'UPDATE Companies SET isActive = $1 WHERE id = $2 RETURNING id, name, isActive',
+      [isActive, id]
+    )
+    const company = result.rows[0]
+    if (!company) {
+      return res.status(404).json({ error: 'Company not found' })
+    }
+
+    res.json({ message: `${company.name} ${isActive ? 'reactivated' : 'disabled'} successfully!!`, isActive: company.isactive })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router
