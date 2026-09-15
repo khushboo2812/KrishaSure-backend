@@ -42,7 +42,7 @@ router.post('/', async (req, res) => {
       return res.status(200).json({ ignored: true })
     }
 
-    const { email_id, from, subject } = payload.data
+    const { email_id, from, to, subject } = payload.data
 
     const { data: email, error } = await resend.emails.receiving.get(email_id)
     if (error) {
@@ -72,6 +72,41 @@ router.post('/', async (req, res) => {
 
     const person = personResult.rows[0]
 
+    // Each client org can have its own dedicated address on our shared
+    // domain (e.g. acme-support@krishasure.io — see
+    // ClientOrganizations.supportEmail, auto-generated in clientOrgs.js).
+    // When the mail was sent to one of those, it names the org directly,
+    // so we don't need to fall back to guessing from the sender's own
+    // memberships. Still require the sender to actually be a client
+    // contact of that specific org before trusting it, so knowing/
+    // guessing an address isn't enough on its own to raise a ticket
+    // against it.
+    const recipientEmails = Array.isArray(to)
+      ? to.map(t => (typeof t === 'string' ? t : t?.email)).filter(Boolean)
+      : (typeof to === 'string' ? [to] : [])
+
+    let companyId = null
+    let clientOrgId = null
+
+    if (recipientEmails.length > 0) {
+      const orgResult = await pool.query(
+        'SELECT * FROM ClientOrganizations WHERE supportEmail = ANY($1::text[])',
+        [recipientEmails]
+      )
+      const targetOrg = orgResult.rows[0]
+
+      if (targetOrg) {
+        const membershipResult = await pool.query(
+          `SELECT 1 FROM Memberships WHERE personId = $1 AND role = 'client' AND companyId = $2 AND clientOrgId = $3`,
+          [person.id, targetOrg.companyid, targetOrg.id]
+        )
+        if (membershipResult.rows.length > 0) {
+          companyId = targetOrg.companyid
+          clientOrgId = targetOrg.id
+        }
+      }
+    }
+
     // Raising a ticket by email is a client-role action, so what
     // matters here is how many *client* memberships this person has —
     // not their total membership count. A person can freely hold one
@@ -82,47 +117,49 @@ router.post('/', async (req, res) => {
     // memberships are genuinely ambiguous — the email address alone
     // can't say which company this ticket is for, so this is flagged
     // for manual triage rather than guessed.
-    const membershipsResult = await pool.query(
-      `SELECT m.companyId, m.clientOrgId FROM Memberships m WHERE m.personId = $1 AND m.role = 'client'`,
-      [person.id]
-    )
-    const clientMemberships = membershipsResult.rows
-
-    if (clientMemberships.length === 0) {
-      sendEmail(
-        senderEmail,
-        'Unable to create ticket',
-        `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
-            <p>This email address isn't set up as a client contact with KrishaSure. Please contact your account administrator, or log in directly to raise a ticket.</p>
-            <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
-          </div>
-        `
+    if (!companyId) {
+      const membershipsResult = await pool.query(
+        `SELECT m.companyId, m.clientOrgId FROM Memberships m WHERE m.personId = $1 AND m.role = 'client'`,
+        [person.id]
       )
-      return res.status(200).json({ handled: 'no_client_membership' })
-    }
+      const clientMemberships = membershipsResult.rows
 
-    if (clientMemberships.length > 1) {
-      sendEmail(
-        senderEmail,
-        'Unable to create ticket automatically',
-        `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h1 style="color: #DC2626;">We couldn't create a ticket automatically</h1>
-            <p>Your email address is registered as a client contact with more than one company on KrishaSure, so we can't tell which one this ticket is for.</p>
-            <p>Please log in and raise the ticket directly so you can pick the right company.</p>
-            <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
-            <br/><br/>
-            <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
-          </div>
-        `
-      )
-      return res.status(200).json({ handled: 'ambiguous_sender' })
-    }
+      if (clientMemberships.length === 0) {
+        sendEmail(
+          senderEmail,
+          'Unable to create ticket',
+          `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
+              <p>This email address isn't set up as a client contact with KrishaSure. Please contact your account administrator, or log in directly to raise a ticket.</p>
+              <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+            </div>
+          `
+        )
+        return res.status(200).json({ handled: 'no_client_membership' })
+      }
 
-    const companyId = clientMemberships[0].companyid
-    const clientOrgId = clientMemberships[0].clientorgid || null
+      if (clientMemberships.length > 1) {
+        sendEmail(
+          senderEmail,
+          'Unable to create ticket automatically',
+          `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h1 style="color: #DC2626;">We couldn't create a ticket automatically</h1>
+              <p>Your email address is registered as a client contact with more than one company on KrishaSure, so we can't tell which one this ticket is for.</p>
+              <p>Please log in and raise the ticket directly so you can pick the right company, or email the company's own dedicated support address if you know it.</p>
+              <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
+              <br/><br/>
+              <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+            </div>
+          `
+        )
+        return res.status(200).json({ handled: 'ambiguous_sender' })
+      }
+
+      companyId = clientMemberships[0].companyid
+      clientOrgId = clientMemberships[0].clientorgid || null
+    }
 
     // A disabled company shouldn't accumulate tickets nobody there can
     // log in to see — same underlying "no activity while disabled"
