@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs')
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 const { authenticateToken } = require('../middleware/auth')
+const { getTicketReplyFromAddress } = require('../utils/supportEmail')
 const { generateVerificationToken } = require('../utils/verificationToken')
 
 function generateTempPassword() {
@@ -30,7 +31,7 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
     const result = await pool.query(
-      `SELECT p.id, m.id AS membershipId, p.name, p.email, m.role, p.createdAt, m.clientOrgId, p.emailVerified, p.mustChangePassword, c.name as clientOrgName
+      `SELECT p.id, m.id AS membershipId, p.name, p.email, m.role, p.createdAt, m.clientOrgId, p.emailVerified, p.mustChangePassword, c.name as clientOrgName, m.isActive
        FROM Memberships m
        JOIN People p ON m.personId = p.id
        LEFT JOIN ClientOrganizations c ON m.clientOrgId = c.id
@@ -480,6 +481,107 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 
     await pool.query('DELETE FROM Memberships WHERE id = $1 AND companyId = $2', [id, companyId])
     res.json({ message: 'User removed from this company successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PUT toggle a membership's active status. Scenario: someone leaves the
+// company. Unlike deleting the membership (which forgets who they even
+// were here), this preserves history while cutting off access — gated
+// at login and mid-session (see auth.js/middleware/auth.js) the same
+// way company-level isActive already is, but for this one person's
+// access to this one company only.
+//
+// Deactivating someone who's currently an active assignee (an agent,
+// or an admin also assigned tickets via alsoAgent — checked by an
+// Agents row existing for them, not by their Membership role literally
+// being 'agent') with open tickets still on their desk refuses to
+// silently leave those tickets stuck on someone who can no longer log
+// in. The caller must pass reassignTo (another active agent's name) in
+// the same request; without it, this returns the list of affected
+// tickets so the frontend can prompt for a replacement before retrying.
+router.put('/:id/active', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId } = req.user
+    const { isActive, reassignTo } = req.body
+
+    const membershipResult = await pool.query(
+      `SELECT m.id, m.role, p.name, p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.id = $1 AND m.companyId = $2`,
+      [id, companyId]
+    )
+    const membership = membershipResult.rows[0]
+    if (!membership) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    if (!isActive) {
+      const agentResult = await pool.query('SELECT * FROM Agents WHERE email = $1 AND companyId = $2', [membership.email, companyId])
+      const agent = agentResult.rows[0]
+
+      if (agent) {
+        const openTicketsResult = await pool.query(
+          `SELECT id, ticketId, title FROM Tickets WHERE assignedTo = $1 AND companyId = $2 AND status != 'Resolved'`,
+          [agent.name, companyId]
+        )
+        const openTickets = openTicketsResult.rows
+
+        if (openTickets.length > 0) {
+          if (!reassignTo) {
+            return res.status(409).json({
+              error: `${membership.name} has ${openTickets.length} open ticket${openTickets.length === 1 ? '' : 's'} — choose who to reassign ${openTickets.length === 1 ? 'it' : 'them'} to before deactivating`,
+              requiresReassignment: true,
+              tickets: openTickets.map(t => ({ id: t.id, ticketId: t.ticketid, title: t.title }))
+            })
+          }
+
+          if (reassignTo === agent.name) {
+            return res.status(400).json({ error: 'Cannot reassign a deactivated agent\'s tickets to themselves' })
+          }
+
+          const targetAgent = await pool.query(
+            `SELECT a.* FROM Agents a
+             JOIN People p ON p.email = a.email
+             JOIN Memberships m ON m.personId = p.id AND m.companyId = a.companyId
+             WHERE a.name = $1 AND a.companyId = $2 AND m.isActive = true`,
+            [reassignTo, companyId]
+          )
+          if (targetAgent.rows.length === 0) {
+            return res.status(400).json({ error: 'The chosen replacement agent was not found or is not active in this company' })
+          }
+
+          await pool.query(
+            `UPDATE Tickets SET assignedTo = $1 WHERE assignedTo = $2 AND companyId = $3 AND status != 'Resolved'`,
+            [reassignTo, agent.name, companyId]
+          )
+
+          const replyFromAddress = await getTicketReplyFromAddress(pool, { companyId, clientOrgId: null })
+          sendEmail(
+            targetAgent.rows[0].email,
+            `${openTickets.length} Ticket${openTickets.length === 1 ? '' : 's'} Reassigned to You`,
+            `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h1 style="color: #0A2540;">Tickets Reassigned to You</h1>
+                <p>${membership.name} was deactivated, and the following ticket${openTickets.length === 1 ? ' was' : 's were'} reassigned to you:</p>
+                <ul>
+                  ${openTickets.map(t => `<li>${t.ticketid} — ${t.title}</li>`).join('')}
+                </ul>
+                <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
+                <br/><br/>
+                <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+              </div>
+            `,
+            null,
+            replyFromAddress
+          )
+        }
+      }
+    }
+
+    await pool.query('UPDATE Memberships SET isActive = $1 WHERE id = $2 AND companyId = $3', [isActive, id, companyId])
+
+    res.json({ message: `${membership.name} ${isActive ? 'reactivated' : 'deactivated'} successfully!!` })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

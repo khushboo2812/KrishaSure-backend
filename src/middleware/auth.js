@@ -5,15 +5,23 @@ const { pool } = require('../config/db')
 // all say the same thing about a disabled company.
 const INACTIVE_COMPANY_MESSAGE = "This company's account is currently inactive — contact your platform administrator"
 
+// Same idea, one level narrower: this specific membership (one person's
+// access to one company) was deactivated, not the company itself —
+// e.g. someone left the company. Distinct wording so a deactivated
+// individual isn't told their company's account is inactive when it
+// isn't.
+const INACTIVE_MEMBERSHIP_MESSAGE = 'Your access to this company has been deactivated — contact your administrator'
+
 // Verifies the JWT, then — unless the caller is platform_owner, who is
-// always exempt — checks that the token's company is still active.
-// This runs on every authenticated request (every route uses this
-// middleware), so disabling a company takes effect immediately for
-// anyone already signed in, not just on their next login. platform_owner
-// must stay exempt: they're the only role that can re-enable a disabled
-// company, so nothing should be able to lock them out — including a
-// session issued while impersonating a company via PlatformDashboard's
-// "View My Company", which never swaps the underlying token's role.
+// always exempt — checks that the token's company AND the specific
+// membership it was issued for are still active. This runs on every
+// authenticated request (every route uses this middleware), so
+// disabling either takes effect immediately for anyone already signed
+// in, not just on their next login. platform_owner must stay exempt:
+// they're the only role that can re-enable a disabled company, so
+// nothing should be able to lock them out — including a session issued
+// while impersonating a company via PlatformDashboard's "View My
+// Company", which never swaps the underlying token's role.
 async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization']
   const token = authHeader && authHeader.split(' ')[1]
@@ -29,10 +37,18 @@ async function authenticateToken(req, res, next) {
 
     if (user.role !== 'platform_owner') {
       try {
-        const result = await pool.query('SELECT isActive FROM Companies WHERE id = $1', [user.companyId])
-        const company = result.rows[0]
-        if (!company || !company.isactive) {
+        const result = await pool.query(
+          `SELECT c.isActive AS companyActive, m.isActive AS membershipActive
+           FROM Memberships m JOIN Companies c ON m.companyId = c.id
+           WHERE m.id = $1`,
+          [user.membershipId]
+        )
+        const row = result.rows[0]
+        if (!row || !row.companyactive) {
           return res.status(403).json({ error: INACTIVE_COMPANY_MESSAGE })
+        }
+        if (!row.membershipactive) {
+          return res.status(403).json({ error: INACTIVE_MEMBERSHIP_MESSAGE })
         }
       } catch (dbErr) {
         return res.status(500).json({ error: dbErr.message })
@@ -51,4 +67,4 @@ function requirePlatformOwner(req, res, next) {
   next()
 }
 
-module.exports = { authenticateToken, requirePlatformOwner, INACTIVE_COMPANY_MESSAGE }
+module.exports = { authenticateToken, requirePlatformOwner, INACTIVE_COMPANY_MESSAGE, INACTIVE_MEMBERSHIP_MESSAGE }
