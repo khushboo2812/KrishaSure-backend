@@ -6,6 +6,7 @@ const { sendEmail } = require('../config/email')
 const { authenticateToken, requirePlatformOwner } = require('../middleware/auth')
 const { generateVerificationToken } = require('../utils/verificationToken')
 const { generateSupportEmail } = require('../utils/supportEmail')
+const { isValidEmail } = require('../utils/validateEmail')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -60,6 +61,9 @@ router.post('/', authenticateToken, requirePlatformOwner, async (req, res) => {
     let verificationToken = null
 
     if (!personId) {
+      if (!isValidEmail(adminEmail)) {
+        return res.status(400).json({ error: 'Enter a valid email address' })
+      }
       const existing = await pool.query('SELECT id, name, email FROM People WHERE LOWER(email) = LOWER($1)', [adminEmail])
       if (existing.rows.length > 0) {
         const person = existing.rows[0]
