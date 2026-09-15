@@ -5,6 +5,7 @@ const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 const { supabase } = require('../config/storage')
 const { INACTIVE_COMPANY_MESSAGE } = require('../middleware/auth')
+const { generateTicketId } = require('../utils/ticketId')
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
@@ -293,17 +294,7 @@ if (!defaultCategory) {
     const ticketsResult = await pool.query('SELECT * FROM Tickets WHERE companyId = $1', [companyId])
     const assignedTo = autoAssignAgent(agentsResult.rows, ticketsResult.rows, defaultCategory, defaultPriority)
 
-    const countResult = await pool.query(
-      "SELECT ticketId FROM Tickets WHERE companyId = $1 ORDER BY id DESC LIMIT 1",
-      [companyId]
-    )
-    let nextNum = 1
-    if (countResult.rows.length > 0) {
-      const lastId = countResult.rows[0].ticketid
-      const lastNum = parseInt(lastId.split('-')[1])
-      nextNum = lastNum + 1
-    }
-    const ticketId = `KS-${String(nextNum).padStart(3, '0')}`
+    const ticketId = await generateTicketId(pool)
     const initialStatus = assignedTo ? 'Open/Assigned' : 'Open/Unassigned'
 
     const ticketInsertResult = await pool.query(
