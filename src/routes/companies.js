@@ -359,6 +359,11 @@ router.delete('/:id', authenticateToken, requirePlatformOwner, async (req, res) 
     }
 
     await pool.query('DELETE FROM Memberships WHERE companyId = $1', [id])
+    // Users is the pre-People/Memberships table — left in place (not
+    // dropped) by create_people_and_memberships.sql as a rollback net,
+    // but it still foreign-keys companyId into Companies, so it has to
+    // be cleared too or the final DELETE below violates that constraint.
+    await pool.query('DELETE FROM Users WHERE companyId = $1', [id])
     await pool.query('DELETE FROM Agents WHERE companyId = $1', [id])
     await pool.query('DELETE FROM ClientOrganizations WHERE companyId = $1', [id])
     await pool.query('DELETE FROM SLARules WHERE companyId = $1', [id])
