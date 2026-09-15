@@ -3,10 +3,10 @@ require('dotenv').config()
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
-const sendEmail = async (to, subject, html, cc = null) => {
+const sendEmail = async (to, subject, html, cc = null, fromAddress = null) => {
   try {
     const emailData = {
-      from: `KrishaSure <${process.env.EMAIL_FROM}>`,
+      from: `KrishaSure <${fromAddress || process.env.EMAIL_FROM}>`,
       to,
       subject,
       html

@@ -94,6 +94,7 @@ router.post('/', async (req, res) => {
   // all, same as every other unhandled-failure gap this app avoids
   // everywhere else in this file.
   let senderEmail = null
+  let replyFromAddress = null
   try {
     const payload = req.body
     if (payload.type !== 'email.received') {
@@ -102,6 +103,15 @@ router.post('/', async (req, res) => {
 
     const { email_id, from, to, subject } = payload.data
     senderEmail = from.includes('<') ? from.match(/<(.+)>/)[1] : from
+
+    // Replies should come from whichever address the sender actually
+    // emailed (their org's own dedicated address when there is one),
+    // not always the generic default — computed up front so every
+    // sendEmail call below, including the very first bounce, can use it.
+    const recipientEmails = Array.isArray(to)
+      ? to.map(t => (typeof t === 'string' ? t : t?.email)).filter(Boolean)
+      : (typeof to === 'string' ? [to] : [])
+    replyFromAddress = recipientEmails[0] || null
 
     const { data: email, error } = await resend.emails.receiving.get(email_id)
     if (error) {
@@ -123,7 +133,9 @@ router.post('/', async (req, res) => {
             <p>This email address isn't registered with KrishaSure. Please contact your account administrator to be set up, or log in directly to raise a ticket.</p>
             <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
           </div>
-        `
+        `,
+        null,
+        replyFromAddress
       )
       return res.status(200).json({ handled: 'unknown_sender' })
     }
@@ -140,10 +152,6 @@ router.post('/', async (req, res) => {
     // contact of that specific org before trusting it, so knowing/
     // guessing an address isn't enough on its own to raise a ticket
     // against it.
-    const recipientEmails = Array.isArray(to)
-      ? to.map(t => (typeof t === 'string' ? t : t?.email)).filter(Boolean)
-      : (typeof to === 'string' ? [to] : [])
-
     let companyId = null
     let clientOrgId = null
 
@@ -219,7 +227,9 @@ router.post('/', async (req, res) => {
               <p>This email address isn't set up as a client contact with KrishaSure. Please contact your account administrator, or log in directly to raise a ticket.</p>
               <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
             </div>
-          `
+          `,
+          null,
+          replyFromAddress
         )
         return res.status(200).json({ handled: 'no_client_membership' })
       }
@@ -237,7 +247,9 @@ router.post('/', async (req, res) => {
               <br/><br/>
               <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
             </div>
-          `
+          `,
+          null,
+          replyFromAddress
         )
         return res.status(200).json({ handled: 'ambiguous_sender' })
       }
@@ -261,7 +273,9 @@ router.post('/', async (req, res) => {
             <p>${INACTIVE_COMPANY_MESSAGE}.</p>
             <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
           </div>
-        `
+        `,
+        null,
+        replyFromAddress
       )
       return res.status(200).json({ handled: 'company_inactive' })
     }
@@ -335,7 +349,8 @@ if (!defaultCategory) {
               <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
             </div>
           `,
-          adminEmails
+          adminEmails,
+          replyFromAddress
         )
       }
     }
@@ -353,7 +368,8 @@ if (!defaultCategory) {
           <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
         </div>
       `,
-      adminEmails
+      adminEmails,
+      replyFromAddress
     )
 
     res.status(200).json({ ticketId })
@@ -369,7 +385,9 @@ if (!defaultCategory) {
             <p>Something went wrong on our end while processing your email. Please try again, or log in directly to raise a ticket.</p>
             <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
           </div>
-        `
+        `,
+        null,
+        replyFromAddress
       )
     }
     res.status(500).json({ error: err.message })
