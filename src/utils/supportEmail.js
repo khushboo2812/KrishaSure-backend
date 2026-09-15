@@ -37,4 +37,19 @@ async function generateSupportEmail(pool, name) {
   }
 }
 
-module.exports = { SUPPORT_EMAIL_DOMAIN, slugify, generateSupportEmail }
+// For app-created correspondence about a ticket (created, resolved,
+// reopened, commented on) there's no inbound "to" address to reuse like
+// inboundEmail.js has, so this resolves the same idea from the other
+// direction: prefer the ticket's client org's own dedicated address,
+// falling back to its company's, and finally to the app-wide default
+// (null) if neither has been generated/backfilled yet.
+async function getTicketReplyFromAddress(pool, { companyId, clientOrgId }) {
+  if (clientOrgId) {
+    const orgResult = await pool.query('SELECT supportEmail FROM ClientOrganizations WHERE id = $1', [clientOrgId])
+    if (orgResult.rows[0]?.supportemail) return orgResult.rows[0].supportemail
+  }
+  const companyResult = await pool.query('SELECT supportEmail FROM Companies WHERE id = $1', [companyId])
+  return companyResult.rows[0]?.supportemail || null
+}
+
+module.exports = { SUPPORT_EMAIL_DOMAIN, slugify, generateSupportEmail, getTicketReplyFromAddress }

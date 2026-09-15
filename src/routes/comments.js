@@ -3,6 +3,7 @@ const router = express.Router()
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 const { authenticateToken } = require('../middleware/auth')
+const { getTicketReplyFromAddress } = require('../utils/supportEmail')
 
 router.get('/:ticketId', authenticateToken, async (req, res) => {
   try {
@@ -52,6 +53,8 @@ router.post('/:ticketId', authenticateToken, async (req, res) => {
       // Remove the current commenter (don't notify themselves)
       recipients.delete(email)
 
+      const replyFromAddress = await getTicketReplyFromAddress(pool, { companyId: ticket.companyid, clientOrgId: ticket.clientorgid })
+
       recipients.forEach(recipient => {
         sendEmail(
           recipient,
@@ -67,7 +70,9 @@ router.post('/:ticketId', authenticateToken, async (req, res) => {
               <br/><br/>
               <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
             </div>
-          `
+          `,
+          null,
+          replyFromAddress
         )
       })
     }
