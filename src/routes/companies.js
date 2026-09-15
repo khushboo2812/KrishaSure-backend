@@ -16,10 +16,26 @@ function generateTempPassword() {
   return password
 }
 
-// GET all companies
+// GET all companies. adminEmailVerified reflects the company's
+// superadmin's own verification status (so the frontend can hide
+// Resend Verification once there's nothing left to verify) — not a
+// Companies column itself, since verification lives on the person, not
+// the company.
 router.get('/', authenticateToken, requirePlatformOwner, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM Companies ORDER BY createdAt DESC')
+    // A scalar subquery rather than a JOIN — a company can have more
+    // than one superadmin, and a JOIN would multiply each such company
+    // into one row per superadmin instead of one row per company.
+    const result = await pool.query(
+      `SELECT c.*, (
+         SELECT p.emailVerified FROM Memberships m
+         JOIN People p ON p.id = m.personId
+         WHERE m.companyId = c.id AND m.role = 'superadmin'
+         ORDER BY m.id ASC LIMIT 1
+       ) AS adminEmailVerified
+       FROM Companies c
+       ORDER BY c.createdAt DESC`
+    )
     res.json(result.rows)
   } catch (err) {
     res.status(500).json({ error: err.message })
