@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs')
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 const { authenticateToken, requirePlatformOwner } = require('../middleware/auth')
+const { generateVerificationToken } = require('../utils/verificationToken')
 const { generateSupportEmail } = require('../utils/supportEmail')
 
 function generateTempPassword() {
@@ -15,10 +16,26 @@ function generateTempPassword() {
   return password
 }
 
-// GET all companies
+// GET all companies. adminEmailVerified reflects the company's
+// superadmin's own verification status (so the frontend can hide
+// Resend Verification once there's nothing left to verify) — not a
+// Companies column itself, since verification lives on the person, not
+// the company.
 router.get('/', authenticateToken, requirePlatformOwner, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM Companies ORDER BY createdAt DESC')
+    // A scalar subquery rather than a JOIN — a company can have more
+    // than one superadmin, and a JOIN would multiply each such company
+    // into one row per superadmin instead of one row per company.
+    const result = await pool.query(
+      `SELECT c.*, (
+         SELECT p.emailVerified FROM Memberships m
+         JOIN People p ON p.id = m.personId
+         WHERE m.companyId = c.id AND m.role = 'superadmin'
+         ORDER BY m.id ASC LIMIT 1
+       ) AS adminEmailVerified
+       FROM Companies c
+       ORDER BY c.createdAt DESC`
+    )
     res.json(result.rows)
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -79,7 +96,7 @@ router.post('/', authenticateToken, requirePlatformOwner, async (req, res) => {
     if (!personId) {
       const throwawayPassword = generateTempPassword()
       const hashedPassword = await bcrypt.hash(throwawayPassword, 10)
-      verificationToken = generateTempPassword() + generateTempPassword()
+      verificationToken = generateVerificationToken()
 
       const personResult = await pool.query(
         `INSERT INTO People (name, email, password, mustChangePassword, emailVerified, verificationToken, verificationTokenExpiry)
@@ -179,6 +196,64 @@ router.post('/:id/resend-welcome', authenticateToken, requirePlatformOwner, asyn
     )
 
     res.json({ message: 'Welcome email resent successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST resend verification email for a company admin who hasn't
+// verified yet — separate from resend-welcome, which is for an
+// already-verified admin who needs new login credentials. Mirrors
+// users.js's own POST /:id/resend-verification.
+router.post('/:id/resend-verification', authenticateToken, requirePlatformOwner, async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const companyResult = await pool.query('SELECT * FROM Companies WHERE id = $1', [id])
+    const company = companyResult.rows[0]
+    if (!company) {
+      return res.status(404).json({ error: 'Company not found' })
+    }
+
+    const adminResult = await pool.query(
+      `SELECT p.* FROM Memberships m JOIN People p ON m.personId = p.id
+       WHERE m.companyId = $1 AND m.role = 'superadmin'`,
+      [id]
+    )
+    const admin = adminResult.rows[0]
+    if (!admin) {
+      return res.status(404).json({ error: 'Company admin not found' })
+    }
+
+    if (admin.emailverified) {
+      return res.status(400).json({ error: 'This company\'s admin has already verified their email' })
+    }
+
+    const verificationToken = generateVerificationToken()
+
+    await pool.query(
+      "UPDATE People SET verificationToken = $1, verificationTokenExpiry = NOW() + INTERVAL '24 hours' WHERE id = $2",
+      [verificationToken, admin.id]
+    )
+
+    sendEmail(
+      admin.email,
+      'Verify your email - KrishaSure 📧',
+      `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #0A2540;">Verify Your Email</h1>
+          <p>Hi ${admin.name},</p>
+          <p>Your company account for <strong>${company.name}</strong> is almost ready. Please verify your email address to activate it.</p>
+          <a href="https://api.krishasure.io/api/users/verify/${verificationToken}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Verify My Email</a>
+          <br/><br/>
+          <p style="color: #DC2626; font-size: 13px; font-weight: 600;">⏰ This link is valid for 24 hours only!!</p>
+          <p style="color: #64748B; font-size: 12px;">Once verified, you'll receive your login credentials in a separate email.</p>
+          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+        </div>
+      `
+    )
+
+    res.json({ message: 'Verification email resent successfully!!' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
