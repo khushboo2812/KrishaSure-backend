@@ -3,6 +3,7 @@ const router = express.Router()
 const { Resend } = require('resend')
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
+const { supabase } = require('../config/storage')
 const { INACTIVE_COMPANY_MESSAGE } = require('../middleware/auth')
 
 const resend = new Resend(process.env.RESEND_API_KEY)
@@ -11,6 +12,57 @@ function generateTicketBodyFromEmail(text, html) {
   if (text) return text.trim()
   if (html) return html.replace(/<[^>]+>/g, ' ').trim()
   return ''
+}
+
+// Inline images (content_disposition 'inline') are already embedded in
+// email.html as base64 data: URIs by default (Resend's default
+// html_format), so only real attachments need saving as separate
+// TicketAttachments. Best-effort: a failed download/upload for one
+// attachment (or all of them) never blocks ticket creation, which has
+// already happened by the time this runs — same "don't lose the whole
+// thing over one bad file" policy attachments.js's own upload route
+// uses for app-side uploads.
+async function saveInboundAttachments(resend, emailId, attachments, ticketDbId, senderEmail) {
+  const realAttachments = attachments.filter(a => a.content_disposition === 'attachment')
+
+  for (const attachment of realAttachments) {
+    try {
+      const { data: attachmentData, error } = await resend.emails.receiving.attachments.get({
+        emailId,
+        id: attachment.id
+      })
+      if (error || !attachmentData?.download_url) {
+        console.error('Failed to get inbound attachment download URL:', attachment.filename, error?.message)
+        continue
+      }
+
+      const fileResponse = await fetch(attachmentData.download_url)
+      if (!fileResponse.ok) {
+        console.error('Failed to download inbound attachment:', attachment.filename, fileResponse.status)
+        continue
+      }
+      const buffer = Buffer.from(await fileResponse.arrayBuffer())
+
+      const fileName = attachment.filename || `attachment-${attachment.id}`
+      const storagePath = `${ticketDbId}/${Date.now()}-${fileName}`
+
+      const { error: uploadError } = await supabase.storage
+        .from('ticket-attachments')
+        .upload(storagePath, buffer, { contentType: attachment.content_type })
+
+      if (uploadError) {
+        console.error('Storage upload failed for inbound attachment:', fileName, uploadError.message)
+        continue
+      }
+
+      await pool.query(
+        'INSERT INTO TicketAttachments (ticketId, fileName, storagePath, fileSize, uploadedBy, source) VALUES ($1, $2, $3, $4, $5, $6)',
+        [ticketDbId, fileName, storagePath, attachment.size, senderEmail, 'email']
+      )
+    } catch (err) {
+      console.error('Inbound attachment processing error:', attachment.filename, err.message)
+    }
+  }
 }
 
 function autoAssignAgent(agents, ticketList, category, priority) {
@@ -234,10 +286,15 @@ if (!defaultCategory) {
     const ticketId = `KS-${String(nextNum).padStart(3, '0')}`
     const initialStatus = assignedTo ? 'Open/Assigned' : 'Open/Unassigned'
 
-    await pool.query(
-      'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId, status, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+    const ticketInsertResult = await pool.query(
+      'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId, status, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
       [ticketId, subject || 'No subject', body, defaultCategory, defaultPriority, assignedTo, senderEmail, companyId, clientOrgId, initialStatus, 'email']
     )
+    const ticketDbId = ticketInsertResult.rows[0].id
+
+    if (email.attachments && email.attachments.length > 0) {
+      await saveInboundAttachments(resend, email_id, email.attachments, ticketDbId, senderEmail)
+    }
 
     const admins = await pool.query(
       `SELECT p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.role IN ('superadmin', 'admin', 'platform_owner') AND m.companyId = $1`,
