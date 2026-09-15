@@ -51,7 +51,7 @@ router.post('/', authenticateToken, async (req, res) => {
     // create a duplicate identity and don't silently link them either —
     // hand the admin that person's existing memberships and let them
     // choose to link a new one (see POST /link-membership) or cancel.
-    const existingPerson = await pool.query('SELECT id, name, email FROM People WHERE email = $1', [email])
+    const existingPerson = await pool.query('SELECT id, name, email FROM People WHERE LOWER(email) = LOWER($1)', [email])
     if (existingPerson.rows.length > 0) {
       const person = existingPerson.rows[0]
       const existingMemberships = await getMembershipsForPerson(person.id)
