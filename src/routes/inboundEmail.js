@@ -327,7 +327,7 @@ if (!defaultCategory) {
           `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
               <h1 style="color: #0A2540;">New Ticket - Auto-Created from Email</h1>
-              <p>This ticket was created automatically from an incoming email to support@krishasure.io, and auto-assigned to you.</p>
+              <p>This ticket was created automatically from an incoming email${replyFromAddress ? ` to ${replyFromAddress}` : ''}, and auto-assigned to you.</p>
               <table style="width: 100%; border-collapse: collapse;">
                 <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticketId}</td></tr>
                 <tr><td style="padding: 8px; background: #f4f7fb;"><strong>From</strong></td><td style="padding: 8px;">${senderEmail}</td></tr>
