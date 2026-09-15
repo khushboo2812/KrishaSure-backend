@@ -125,6 +125,34 @@ router.put('/:id', authenticateToken, async (req, res) => {
   }
 })
 
+// Backfills a supportEmail for a client org that predates this feature
+// (POST / only generates one at creation time). Refuses to touch an org
+// that already has one — regenerating would silently break an address
+// someone may already be emailing.
+router.post('/:id/support-email', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId } = req.user
+
+    const existing = await pool.query('SELECT * FROM ClientOrganizations WHERE id = $1 AND companyId = $2', [id, companyId])
+    const org = existing.rows[0]
+
+    if (!org) {
+      return res.status(404).json({ error: 'Client organization not found' })
+    }
+    if (org.supportemail) {
+      return res.status(400).json({ error: 'This client organization already has a support email address' })
+    }
+
+    const supportEmail = await generateSupportEmail(org.name)
+    await pool.query('UPDATE ClientOrganizations SET supportEmail = $1 WHERE id = $2 AND companyId = $3', [supportEmail, id, companyId])
+
+    res.json({ message: 'Support email address added successfully!!', supportEmail })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.get('/:id/hours-balance', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
