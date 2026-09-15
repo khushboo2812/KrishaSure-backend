@@ -6,6 +6,7 @@ const { sendEmail } = require('../config/email')
 const { authenticateToken } = require('../middleware/auth')
 const { getTicketReplyFromAddress } = require('../utils/supportEmail')
 const { generateVerificationToken } = require('../utils/verificationToken')
+const { isValidEmail } = require('../utils/validateEmail')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -14,6 +15,81 @@ function generateTempPassword() {
     password += chars.charAt(Math.floor(Math.random() * chars.length))
   }
   return password
+}
+
+// Shared by DELETE /:id (remove from company) and PUT /:id/active
+// (deactivate) — both cut off an agent's ability to hold tickets, so
+// both need the same "don't leave tickets stranded" flow: if they have
+// open tickets, refuse until the caller supplies reassignTo (another
+// active agent's name), reassign those tickets, and email the new
+// assignee. Returns {status, body} to send back as-is if the caller
+// must act (missing/invalid reassignTo); returns null once nothing is
+// left to do — either there was no agent, no open tickets, or the
+// reassignment above just completed.
+async function reassignOpenTicketsIfNeeded({ membership, companyId, reassignTo, beforeGerund, pastTense }) {
+  const agentResult = await pool.query('SELECT * FROM Agents WHERE email = $1 AND companyId = $2', [membership.email, companyId])
+  const agent = agentResult.rows[0]
+  if (!agent) return null
+
+  const openTicketsResult = await pool.query(
+    `SELECT id, ticketId, title FROM Tickets WHERE assignedTo = $1 AND companyId = $2 AND status != 'Resolved'`,
+    [agent.name, companyId]
+  )
+  const openTickets = openTicketsResult.rows
+  if (openTickets.length === 0) return null
+
+  if (!reassignTo) {
+    return {
+      status: 409,
+      body: {
+        error: `${membership.name} has ${openTickets.length} open ticket${openTickets.length === 1 ? '' : 's'} — choose who to reassign ${openTickets.length === 1 ? 'it' : 'them'} to before ${beforeGerund}`,
+        requiresReassignment: true,
+        tickets: openTickets.map(t => ({ id: t.id, ticketId: t.ticketid, title: t.title }))
+      }
+    }
+  }
+
+  if (reassignTo === agent.name) {
+    return { status: 400, body: { error: 'Cannot reassign a departing agent\'s tickets to themselves' } }
+  }
+
+  const targetAgent = await pool.query(
+    `SELECT a.* FROM Agents a
+     JOIN People p ON p.email = a.email
+     JOIN Memberships m ON m.personId = p.id AND m.companyId = a.companyId
+     WHERE a.name = $1 AND a.companyId = $2 AND m.isActive = true`,
+    [reassignTo, companyId]
+  )
+  if (targetAgent.rows.length === 0) {
+    return { status: 400, body: { error: 'The chosen replacement agent was not found or is not active in this company' } }
+  }
+
+  await pool.query(
+    `UPDATE Tickets SET assignedTo = $1 WHERE assignedTo = $2 AND companyId = $3 AND status != 'Resolved'`,
+    [reassignTo, agent.name, companyId]
+  )
+
+  const replyFromAddress = await getTicketReplyFromAddress(pool, { companyId, clientOrgId: null })
+  sendEmail(
+    targetAgent.rows[0].email,
+    `${openTickets.length} Ticket${openTickets.length === 1 ? '' : 's'} Reassigned to You`,
+    `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h1 style="color: #0A2540;">Tickets Reassigned to You</h1>
+        <p>${membership.name} was ${pastTense}, and the following ticket${openTickets.length === 1 ? ' was' : 's were'} reassigned to you:</p>
+        <ul>
+          ${openTickets.map(t => `<li>${t.ticketid} — ${t.title}</li>`).join('')}
+        </ul>
+        <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
+        <br/><br/>
+        <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+      </div>
+    `,
+    null,
+    replyFromAddress
+  )
+
+  return null
 }
 
 async function getMembershipsForPerson(personId) {
@@ -48,6 +124,10 @@ router.post('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
     const { name, email, role, level, skills, clientOrgId, alsoAgent } = req.body
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'Enter a valid email address' })
+    }
 
     // If this email already belongs to a real person, don't silently
     // create a duplicate identity and don't silently link them either —
@@ -468,14 +548,22 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
     const { companyId } = req.user
+    const { reassignTo } = req.body || {}
 
     const result = await pool.query(
-      `SELECT m.id, m.role, p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.id = $1 AND m.companyId = $2`,
+      `SELECT m.id, m.role, p.name, p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.id = $1 AND m.companyId = $2`,
       [id, companyId]
     )
     const membership = result.rows[0]
 
     if (membership && membership.role === 'agent') {
+      const conflict = await reassignOpenTicketsIfNeeded({
+        membership, companyId, reassignTo,
+        beforeGerund: 'removing them from the company',
+        pastTense: 'removed from the company'
+      })
+      if (conflict) return res.status(conflict.status).json(conflict.body)
+
       await pool.query('DELETE FROM Agents WHERE email = $1 AND companyId = $2', [membership.email, companyId])
     }
 
@@ -517,66 +605,12 @@ router.put('/:id/active', authenticateToken, async (req, res) => {
     }
 
     if (!isActive) {
-      const agentResult = await pool.query('SELECT * FROM Agents WHERE email = $1 AND companyId = $2', [membership.email, companyId])
-      const agent = agentResult.rows[0]
-
-      if (agent) {
-        const openTicketsResult = await pool.query(
-          `SELECT id, ticketId, title FROM Tickets WHERE assignedTo = $1 AND companyId = $2 AND status != 'Resolved'`,
-          [agent.name, companyId]
-        )
-        const openTickets = openTicketsResult.rows
-
-        if (openTickets.length > 0) {
-          if (!reassignTo) {
-            return res.status(409).json({
-              error: `${membership.name} has ${openTickets.length} open ticket${openTickets.length === 1 ? '' : 's'} — choose who to reassign ${openTickets.length === 1 ? 'it' : 'them'} to before deactivating`,
-              requiresReassignment: true,
-              tickets: openTickets.map(t => ({ id: t.id, ticketId: t.ticketid, title: t.title }))
-            })
-          }
-
-          if (reassignTo === agent.name) {
-            return res.status(400).json({ error: 'Cannot reassign a deactivated agent\'s tickets to themselves' })
-          }
-
-          const targetAgent = await pool.query(
-            `SELECT a.* FROM Agents a
-             JOIN People p ON p.email = a.email
-             JOIN Memberships m ON m.personId = p.id AND m.companyId = a.companyId
-             WHERE a.name = $1 AND a.companyId = $2 AND m.isActive = true`,
-            [reassignTo, companyId]
-          )
-          if (targetAgent.rows.length === 0) {
-            return res.status(400).json({ error: 'The chosen replacement agent was not found or is not active in this company' })
-          }
-
-          await pool.query(
-            `UPDATE Tickets SET assignedTo = $1 WHERE assignedTo = $2 AND companyId = $3 AND status != 'Resolved'`,
-            [reassignTo, agent.name, companyId]
-          )
-
-          const replyFromAddress = await getTicketReplyFromAddress(pool, { companyId, clientOrgId: null })
-          sendEmail(
-            targetAgent.rows[0].email,
-            `${openTickets.length} Ticket${openTickets.length === 1 ? '' : 's'} Reassigned to You`,
-            `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h1 style="color: #0A2540;">Tickets Reassigned to You</h1>
-                <p>${membership.name} was deactivated, and the following ticket${openTickets.length === 1 ? ' was' : 's were'} reassigned to you:</p>
-                <ul>
-                  ${openTickets.map(t => `<li>${t.ticketid} — ${t.title}</li>`).join('')}
-                </ul>
-                <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
-                <br/><br/>
-                <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
-              </div>
-            `,
-            null,
-            replyFromAddress
-          )
-        }
-      }
+      const conflict = await reassignOpenTicketsIfNeeded({
+        membership, companyId, reassignTo,
+        beforeGerund: 'deactivating',
+        pastTense: 'deactivated'
+      })
+      if (conflict) return res.status(conflict.status).json(conflict.body)
     }
 
     await pool.query('UPDATE Memberships SET isActive = $1 WHERE id = $2 AND companyId = $3', [isActive, id, companyId])
