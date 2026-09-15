@@ -7,34 +7,62 @@ const { authenticateToken } = require('../middleware/auth')
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }) // 10MB cap
 
-// POST upload an attachment to a ticket
-router.post('/:ticketId', authenticateToken, upload.single('file'), async (req, res) => {
+// POST upload one or more attachments to a ticket. Files are uploaded
+// to storage one at a time (not Promise.all) so one bad file doesn't
+// race a failed request against ones still in flight, and so a partial
+// failure is easy to report accurately — every file gets its own
+// outcome, and files that succeeded before a later one failed are kept
+// (not rolled back), since there's no reason to discard a good upload
+// just because a different file in the same batch failed.
+router.post('/:ticketId', authenticateToken, upload.array('files', 10), async (req, res) => {
   try {
     const { ticketId } = req.params
     const { email } = req.user
-    const file = req.file
+    const files = req.files
 
-    if (!file) {
+    if (!files || files.length === 0) {
       return res.status(400).json({ error: 'No file provided' })
     }
 
-    const storagePath = `${ticketId}/${Date.now()}-${file.originalname}`
+    const uploaded = []
+    const failed = []
 
-    const { error: uploadError } = await supabase.storage
-      .from('ticket-attachments')
-      .upload(storagePath, file.buffer, { contentType: file.mimetype })
+    for (const file of files) {
+      try {
+        const storagePath = `${ticketId}/${Date.now()}-${file.originalname}`
 
-    if (uploadError) {
-      console.error('Storage upload failed:', uploadError.message)
-      return res.status(500).json({ error: 'Upload failed' })
+        const { error: uploadError } = await supabase.storage
+          .from('ticket-attachments')
+          .upload(storagePath, file.buffer, { contentType: file.mimetype })
+
+        if (uploadError) {
+          console.error('Storage upload failed:', file.originalname, uploadError.message)
+          failed.push({ fileName: file.originalname, error: 'Upload failed' })
+          continue
+        }
+
+        await pool.query(
+          'INSERT INTO TicketAttachments (ticketId, fileName, storagePath, fileSize, uploadedBy, source) VALUES ($1, $2, $3, $4, $5, $6)',
+          [ticketId, file.originalname, storagePath, file.size, email, 'app']
+        )
+        uploaded.push(file.originalname)
+      } catch (err) {
+        console.error('Attachment upload error:', file.originalname, err.message)
+        failed.push({ fileName: file.originalname, error: err.message })
+      }
     }
 
-    await pool.query(
-      'INSERT INTO TicketAttachments (ticketId, fileName, storagePath, fileSize, uploadedBy, source) VALUES ($1, $2, $3, $4, $5, $6)',
-      [ticketId, file.originalname, storagePath, file.size, email, 'app']
-    )
+    if (uploaded.length === 0) {
+      return res.status(500).json({ error: 'All uploads failed', failed })
+    }
 
-    res.status(201).json({ message: 'File uploaded successfully!!' })
+    res.status(201).json({
+      message: failed.length > 0
+        ? `${uploaded.length} file(s) uploaded, ${failed.length} failed`
+        : `${uploaded.length} file(s) uploaded successfully!!`,
+      uploaded,
+      failed
+    })
   } catch (err) {
     console.error('Attachment upload error:', err.message)
     res.status(500).json({ error: err.message })
