@@ -73,8 +73,9 @@ router.post('/', async (req, res) => {
     const person = personResult.rows[0]
 
     // Each client org can have its own dedicated address on our shared
-    // domain (e.g. acme-support@krishasure.io — see
-    // ClientOrganizations.supportEmail, auto-generated in clientOrgs.js).
+    // support-email domain (e.g. acme-support@tickets.krishasure.io —
+    // see ClientOrganizations.supportEmail, auto-generated in
+    // clientOrgs.js).
     // When the mail was sent to one of those, it names the org directly,
     // so we don't need to fall back to guessing from the sender's own
     // memberships. Still require the sender to actually be a client
