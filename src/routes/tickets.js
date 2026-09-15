@@ -4,6 +4,7 @@ const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 const { authenticateToken } = require('../middleware/auth')
 const { generateTicketId } = require('../utils/ticketId')
+const { getTicketReplyFromAddress } = require('../utils/supportEmail')
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -49,6 +50,8 @@ const newTicketDbId = insertResult.rows[0].id
     const agentResult = await pool.query('SELECT email FROM Agents WHERE name = $1 AND companyId = $2', [assignedTo, companyId])
 const agentEmail = agentResult.rows[0]?.email
 
+    const replyFromAddress = await getTicketReplyFromAddress(pool, { companyId, clientOrgId })
+
     sendEmail(
       clientEmail,
       `Ticket ${ticketId} Created - ${title}`,
@@ -64,7 +67,8 @@ const agentEmail = agentResult.rows[0]?.email
           <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
         </div>
       `,
-      adminEmails
+      adminEmails,
+      replyFromAddress
     )
 
     if (agentEmail) {
@@ -82,7 +86,8 @@ const agentEmail = agentResult.rows[0]?.email
             <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
           </div>
         `,
-        adminEmails
+        adminEmails,
+        replyFromAddress
       )
     }
 
@@ -116,6 +121,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const admins = await pool.query("SELECT p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.role IN ('superadmin', 'admin') AND m.companyId = $1", [companyId])
     const adminEmails = admins.rows.map(a => a.email).join(',')
 
+    const replyFromAddress = ticket ? await getTicketReplyFromAddress(pool, { companyId, clientOrgId: ticket.clientorgid }) : null
+
     if (status === "Resolved" && ticket) {
       sendEmail(
         ticket.clientemail,
@@ -131,8 +138,39 @@ router.put('/:id', authenticateToken, async (req, res) => {
             <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
           </div>
         `,
-        adminEmails
+        adminEmails,
+        replyFromAddress
       )
+    }
+
+    // A ticket reassigned to a different agent (not the create-time
+    // assignment, which POST / already notifies about, and not a resolve
+    // — resolving always resends the ticket's current, unchanged
+    // assignedTo) never told the newly assigned agent anything landed on
+    // their desk.
+    if (ticket && assignedTo && assignedTo !== ticket.assignedto) {
+      const agentResult = await pool.query('SELECT email FROM Agents WHERE name = $1 AND companyId = $2', [assignedTo, companyId])
+      const agentEmail = agentResult.rows[0]?.email
+      if (agentEmail) {
+        sendEmail(
+          agentEmail,
+          `Ticket Assigned to You - ${ticket.ticketid}`,
+          `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h1 style="color: #0A2540;">A Ticket Has Been Assigned to You</h1>
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticket.ticketid}</td></tr>
+                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Title</strong></td><td style="padding: 8px;">${ticket.title}</td></tr>
+                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Client</strong></td><td style="padding: 8px;">${ticket.clientemail}</td></tr>
+              </table>
+              <br/>
+              <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+            </div>
+          `,
+          adminEmails,
+          replyFromAddress
+        )
+      }
     }
 
     res.json({ message: 'Ticket updated successfully!!' })
@@ -189,6 +227,7 @@ router.post('/:id/reopen', authenticateToken, async (req, res) => {
       [ticket.assignedto, companyId]
     )
     const agentEmail = agentResult.rows[0]?.email
+    const replyFromAddress = await getTicketReplyFromAddress(pool, { companyId, clientOrgId: ticket.clientorgid })
 
     sendEmail(
       ticket.clientemail,
@@ -202,7 +241,8 @@ router.post('/:id/reopen', authenticateToken, async (req, res) => {
           <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
         </div>
       `,
-      agentEmail ? `${agentEmail},${adminEmails}` : adminEmails
+      agentEmail ? `${agentEmail},${adminEmails}` : adminEmails,
+      replyFromAddress
     )
 
     res.json({ message: 'Ticket reopened successfully!!' })
