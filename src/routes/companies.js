@@ -43,7 +43,7 @@ router.post('/', authenticateToken, requirePlatformOwner, async (req, res) => {
     let verificationToken = null
 
     if (!personId) {
-      const existing = await pool.query('SELECT id, name, email FROM People WHERE email = $1', [adminEmail])
+      const existing = await pool.query('SELECT id, name, email FROM People WHERE LOWER(email) = LOWER($1)', [adminEmail])
       if (existing.rows.length > 0) {
         const person = existing.rows[0]
         const membershipsResult = await pool.query(

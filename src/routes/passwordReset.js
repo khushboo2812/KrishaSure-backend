@@ -19,7 +19,7 @@ router.post('/request', async (req, res) => {
   try {
     const { email } = req.body
 
-    const result = await pool.query('SELECT * FROM People WHERE email = $1', [email])
+    const result = await pool.query('SELECT * FROM People WHERE LOWER(email) = LOWER($1)', [email])
 
     if (result.rows.length === 0) {
       // Don't reveal if email exists or not (security best practice)

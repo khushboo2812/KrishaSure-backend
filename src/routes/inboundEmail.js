@@ -53,7 +53,7 @@ router.post('/', async (req, res) => {
     const senderEmail = from.includes('<') ? from.match(/<(.+)>/)[1] : from
     const body = generateTicketBodyFromEmail(email.text, email.html)
 
-    const personResult = await pool.query('SELECT * FROM People WHERE email = $1', [senderEmail])
+    const personResult = await pool.query('SELECT * FROM People WHERE LOWER(email) = LOWER($1)', [senderEmail])
 
     if (personResult.rows.length === 0) {
       sendEmail(
