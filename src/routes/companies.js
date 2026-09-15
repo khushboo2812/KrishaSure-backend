@@ -95,12 +95,8 @@ router.post('/', authenticateToken, requirePlatformOwner, async (req, res) => {
     )
 
     await pool.query(
-      `INSERT INTO Categories (name, description, companyId) VALUES
-       ($1, $2, $3), ($4, $5, $3), ($6, $7, $3), ($8, $9, $3)`,
-      ['Network', 'Network and connectivity issues', companyId,
-       'Software', 'Software and application issues',
-       'Hardware', 'Hardware and equipment issues',
-       'Email', 'Email and communication issues']
+      'INSERT INTO Categories (name, description, companyId) VALUES ($1, $2, $3)',
+      ['General', 'General inquiries and issues', companyId]
     )
 
     await pool.query(
