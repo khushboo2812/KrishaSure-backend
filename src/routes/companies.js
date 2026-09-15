@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs')
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 const { authenticateToken, requirePlatformOwner } = require('../middleware/auth')
+const { generateSupportEmail } = require('../utils/supportEmail')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -62,9 +63,16 @@ router.post('/', authenticateToken, requirePlatformOwner, async (req, res) => {
       }
     }
 
+    // Every company gets its own dedicated inbound address on our shared
+    // domain — an internal company's only address (it has no client
+    // orgs), or an MSP's general address, separate from each of its
+    // client orgs' own addresses (see clientOrgs.js). See
+    // inboundEmail.js for how this is matched against incoming mail.
+    const supportEmail = await generateSupportEmail(pool, companyName)
+
     const companyResult = await pool.query(
-      'INSERT INTO Companies (name, tier, databaseType, companyType) VALUES ($1, $2, $3, $4) RETURNING id',
-      [companyName, tier || 'starter', 'shared', companyType || 'internal']
+      'INSERT INTO Companies (name, tier, databaseType, companyType, supportEmail) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+      [companyName, tier || 'starter', 'shared', companyType || 'internal', supportEmail]
     )
     const companyId = companyResult.rows[0].id
 
@@ -202,6 +210,33 @@ router.put('/:id/active', authenticateToken, requirePlatformOwner, async (req, r
     }
 
     res.json({ message: `${company.name} ${isActive ? 'reactivated' : 'disabled'} successfully!!`, isActive: company.isactive })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Backfills a supportEmail for a company that predates this feature
+// (POST / only generates one at creation time). Refuses to touch a
+// company that already has one — regenerating would silently break an
+// address someone may already be emailing.
+router.post('/:id/support-email', authenticateToken, requirePlatformOwner, async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const existing = await pool.query('SELECT * FROM Companies WHERE id = $1', [id])
+    const company = existing.rows[0]
+
+    if (!company) {
+      return res.status(404).json({ error: 'Company not found' })
+    }
+    if (company.supportemail) {
+      return res.status(400).json({ error: 'This company already has a support email address' })
+    }
+
+    const supportEmail = await generateSupportEmail(pool, company.name)
+    await pool.query('UPDATE Companies SET supportEmail = $1 WHERE id = $2', [supportEmail, id])
+
+    res.json({ message: 'Support email address added successfully!!', supportEmail })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

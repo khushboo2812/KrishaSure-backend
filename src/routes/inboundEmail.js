@@ -107,6 +107,32 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Second priority: a company's own address (an internal company's
+    // only address, or an MSP's general one, separate from each of its
+    // client orgs' own addresses — see Companies.supportEmail, generated
+    // in companies.js). Only tried when no client-org address matched
+    // above. Require the sender to hold a client membership somewhere in
+    // that company; if they have one tied to a specific client org,
+    // prefer that org's id on the ticket over leaving it blank.
+    if (!companyId && recipientEmails.length > 0) {
+      const companyMatch = await pool.query(
+        'SELECT * FROM Companies WHERE supportEmail = ANY($1::text[])',
+        [recipientEmails]
+      )
+      const targetCompany = companyMatch.rows[0]
+
+      if (targetCompany) {
+        const membershipResult = await pool.query(
+          `SELECT clientOrgId FROM Memberships WHERE personId = $1 AND role = 'client' AND companyId = $2 ORDER BY id LIMIT 1`,
+          [person.id, targetCompany.id]
+        )
+        if (membershipResult.rows.length > 0) {
+          companyId = targetCompany.id
+          clientOrgId = membershipResult.rows[0].clientorgid || null
+        }
+      }
+    }
+
     // Raising a ticket by email is a client-role action, so what
     // matters here is how many *client* memberships this person has —
     // not their total membership count. A person can freely hold one
