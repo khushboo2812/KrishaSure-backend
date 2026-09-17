@@ -6,10 +6,24 @@ const { authenticateToken } = require('../middleware/auth')
 const { generateTicketId } = require('../utils/ticketId')
 const { getTicketReplyFromAddress } = require('../utils/supportEmail')
 
+// Tickets only stores clientEmail (a ticket can come in from someone
+// with no People row at all, historically, or a typo'd address), so
+// the requester's name is resolved live via a LEFT JOIN rather than
+// stored on the ticket — this also means a rename in People shows up
+// immediately on old tickets instead of freezing whatever name existed
+// at creation time. clientName is null when no matching person exists;
+// callers fall back to showing the raw email.
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
-    const result = await pool.query('SELECT * FROM Tickets WHERE companyId = $1 ORDER BY createdAt DESC', [companyId])
+    const result = await pool.query(
+      `SELECT t.*, p.name AS clientName
+       FROM Tickets t
+       LEFT JOIN People p ON LOWER(p.email) = LOWER(t.clientEmail)
+       WHERE t.companyId = $1
+       ORDER BY t.createdAt DESC`,
+      [companyId]
+    )
     res.json(result.rows)
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -20,7 +34,13 @@ router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
     const { companyId } = req.user
-    const result = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
+    const result = await pool.query(
+      `SELECT t.*, p.name AS clientName
+       FROM Tickets t
+       LEFT JOIN People p ON LOWER(p.email) = LOWER(t.clientEmail)
+       WHERE t.id = $1 AND t.companyId = $2`,
+      [id, companyId]
+    )
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
