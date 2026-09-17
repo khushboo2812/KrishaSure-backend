@@ -145,13 +145,13 @@ router.post('/', authenticateToken, async (req, res) => {
     // UI, which is superadmin-only) and create a brand-new user with
     // whatever role they chose, up to and including superadmin: a full
     // privilege escalation to admin control of their own company.
-    if (callerRole !== 'superadmin' && callerRole !== 'admin') {
+    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
     // A plain admin granting someone superadmin would be handing out
     // access beyond their own — only an existing superadmin can create
     // another one.
-    if (role === 'superadmin' && callerRole !== 'superadmin') {
+    if (role === 'superadmin' && callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
       return res.status(403).json({ error: 'Only a superadmin can grant superadmin access' })
     }
 
@@ -231,10 +231,10 @@ router.post('/link-membership', authenticateToken, async (req, res) => {
 
     // Same privilege-escalation guard as POST / above — this is the
     // other path to creating a membership with an arbitrary role.
-    if (callerRole !== 'superadmin' && callerRole !== 'admin') {
+    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
-    if (role === 'superadmin' && callerRole !== 'superadmin') {
+    if (role === 'superadmin' && callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
       return res.status(403).json({ error: 'Only a superadmin can grant superadmin access' })
     }
 
@@ -379,7 +379,7 @@ router.put('/:id/name', authenticateToken, async (req, res) => {
     const { companyId, role } = req.user
     const { name } = req.body
 
-    if (role !== 'superadmin' && role !== 'admin') {
+    if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
 
@@ -421,7 +421,7 @@ router.post('/:id/resend-verification', authenticateToken, async (req, res) => {
     const { id } = req.params
     const { companyId, role } = req.user
 
-    if (role !== 'superadmin' && role !== 'admin') {
+    if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
 
@@ -483,7 +483,7 @@ router.put('/:id/password', authenticateToken, async (req, res) => {
 
     const isOwnPassword = String(id) === String(personId)
     if (!isOwnPassword) {
-      if (role !== 'superadmin' && role !== 'admin') {
+      if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
         return res.status(403).json({ error: 'Access denied' })
       }
       const membership = await pool.query('SELECT id FROM Memberships WHERE personId = $1 AND companyId = $2', [id, companyId])
@@ -509,7 +509,7 @@ router.put('/:id/agent-details', authenticateToken, async (req, res) => {
     const { companyId, role } = req.user
     const { level, skills } = req.body
 
-    if (role !== 'superadmin' && role !== 'admin') {
+    if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
 
@@ -547,7 +547,7 @@ router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
     const { id } = req.params
     const { companyId, role } = req.user
 
-    if (role !== 'superadmin' && role !== 'admin') {
+    if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
 
@@ -605,7 +605,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const { companyId, role: callerRole } = req.user
     const { reassignTo } = req.body || {}
 
-    if (callerRole !== 'superadmin' && callerRole !== 'admin') {
+    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
 
@@ -658,7 +658,7 @@ router.put('/:id/active', authenticateToken, async (req, res) => {
     const { companyId, role: callerRole } = req.user
     const { isActive, reassignTo } = req.body
 
-    if (callerRole !== 'superadmin' && callerRole !== 'admin') {
+    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
 
