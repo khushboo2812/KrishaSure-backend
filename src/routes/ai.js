@@ -171,22 +171,34 @@ router.post('/suggest', authenticateToken, async (req, res) => {
 // prior turn of the conversation (the initial ticket prompt, the
 // initial suggestion, and any further exchange since) in the Gemini
 // SDK's own chat format ([{role: 'user'|'model', parts: [{text}]}]);
-// `message` is the new thing the person just typed. Kept as its own
-// endpoint rather than folding into /suggest (branching on whether
-// history is present) since the two have genuinely different request
-// shapes — one seeds a conversation from a ticket's title/description,
-// this one continues an already-open one.
+// `message` is the new thing the person just typed, and `attachments`
+// (optional) is anything newly attached since the last message the AI
+// actually saw. Kept as its own endpoint rather than folding into
+// /suggest (branching on whether history is present) since the two
+// have genuinely different request shapes — one seeds a conversation
+// from a ticket's title/description, this one continues an already-
+// open one.
 router.post('/chat', authenticateToken, async (req, res) => {
-  const { history, message } = req.body
+  const { history, message, attachments } = req.body
   if (!Array.isArray(history) || !message) {
     return res.status(400).json({ error: 'history and message are required' })
+  }
+  // A new attachment added mid-conversation (a 3rd screenshot after
+  // the first two) belongs to *this* message, same as the initial
+  // ones belong to the opening one — not resent on every later turn,
+  // just attached to the message that actually introduces it. Same
+  // validation as /suggest, so an unsupported/oversized one here fails
+  // just as clearly instead of the model silently never seeing it.
+  const { parts: attachmentParts, error: attachmentError } = validateAttachments(attachments)
+  if (attachmentError) {
+    return res.status(400).json({ error: attachmentError })
   }
   const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" })
 
   try {
     const text = await generateWithRetry(async () => {
       const chat = model.startChat({ history })
-      const result = await chat.sendMessage(message)
+      const result = await chat.sendMessage([{ text: message }, ...attachmentParts])
       const response = await result.response
       return response.text()
     })
