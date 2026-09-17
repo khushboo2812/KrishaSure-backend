@@ -1,0 +1,15 @@
+-- Run by hand in the Supabase SQL editor (this repo has no migration
+-- runner — schema is managed directly in Supabase).
+--
+-- If a client spoke to the AI suggestion feature before submitting a
+-- ticket, that conversation is otherwise lost the moment the ticket is
+-- created — the agent who picks it up starts from zero even though
+-- the client may have already ruled out half the obvious fixes.
+-- Stored as JSONB: an array of {role: 'user'|'model', text}. Text
+-- only, deliberately — any attached images already get uploaded as
+-- normal ticket attachments on the same submit, so re-embedding their
+-- multi-MB base64 bytes a second time here would needlessly bloat
+-- every GET /api/tickets response (which returns every ticket for the
+-- company at once) for a copy nobody needs. NULL when no AI
+-- conversation happened before the ticket was filed.
+ALTER TABLE Tickets ADD COLUMN IF NOT EXISTS aiConversation JSONB;

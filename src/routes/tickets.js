@@ -53,14 +53,19 @@ router.get('/:id', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
-    const { title, description, category, priority, assignedTo, clientEmail, clientOrgId } = req.body
+    const { title, description, category, priority, assignedTo, clientEmail, clientOrgId, aiConversation } = req.body
 
     const ticketId = await generateTicketId(pool)
 const initialStatus = assignedTo ? 'Open/Assigned' : 'Open/Unassigned'
 
+// aiConversation is [{role: 'user'|'model', text}], text only (see
+// sql/add_ticket_ai_conversation.sql) — whatever the client discussed
+// with the AI suggestion feature before submitting, if anything, so
+// whoever picks up the ticket isn't starting from zero. Stored as-is;
+// an empty/absent conversation is just null, nothing to validate.
 const insertResult = await pool.query(
-  'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
-  [ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId || null, initialStatus]
+  'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId, status, aiConversation) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
+  [ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId || null, initialStatus, aiConversation && aiConversation.length > 0 ? JSON.stringify(aiConversation) : null]
 )
 const newTicketDbId = insertResult.rows[0].id
 
