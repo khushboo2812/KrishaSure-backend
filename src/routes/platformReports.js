@@ -4,6 +4,7 @@ const { pool } = require('../config/db')
 const { authenticateToken, requirePlatformOwner } = require('../middleware/auth')
 const { parseWindow, buildTrendSeries, buildSignupsSeries } = require('../utils/reportTrends')
 const { isContractActive, advancePeriodIfDue, computeOrgBalance } = require('../utils/contractPeriod')
+const { businessHoursElapsed } = require('../utils/businessHours')
 
 // Everything in this file is platform-owner only and deliberately never
 // filters by companyId — it's the cross-company view. Company-scoped
@@ -46,19 +47,54 @@ router.get('/ticket-trends', async (req, res) => {
       [bucket, start]
     )
 
-    const resolvedResult = await pool.query(
-      `SELECT date_trunc($1, t.resolvedAt) AS bucket,
-         COUNT(*) AS resolvedcnt,
-         COUNT(*) FILTER (WHERE sla.maxHours IS NOT NULL) AS eligiblecnt,
-         COUNT(*) FILTER (WHERE sla.maxHours IS NOT NULL AND EXTRACT(EPOCH FROM (t.resolvedAt - t.createdAt)) / 3600 <= sla.maxHours) AS withinslacnt
+    // Bucketing stays in SQL (unaffected by business hours, and this
+    // guarantees the bucket keys line up with bucketsResult above).
+    // Eligible/within-SLA classification happens in JS per ticket,
+    // against its OWN company's business hours and SLA rules — this
+    // report spans every company, and they don't all share one
+    // business-hours config, so there's no single SQL expression that
+    // could classify every row correctly.
+    const resolvedRawResult = await pool.query(
+      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.companyId, t.priority, t.createdAt, t.resolvedAt
        FROM Tickets t
-       LEFT JOIN SLARules sla ON sla.priority = t.priority AND sla.categoryId IS NULL AND sla.companyId = t.companyId
-       WHERE t.status = 'Resolved' AND t.resolvedAt >= $2
-       GROUP BY 1`,
+       WHERE t.status = 'Resolved' AND t.resolvedAt >= $2`,
       [bucket, start]
     )
 
-    res.json(buildTrendSeries(bucketsResult.rows, createdResult.rows, resolvedResult.rows))
+    const companiesResult = await pool.query('SELECT id, businessDays, businessHoursStart, businessHoursEnd, timezone FROM Companies')
+    const businessHoursByCompany = {}
+    companiesResult.rows.forEach(c => {
+      businessHoursByCompany[c.id] = {
+        businessDays: c.businessdays,
+        businessHoursStart: c.businesshoursstart,
+        businessHoursEnd: c.businesshoursend,
+        timezone: c.timezone
+      }
+    })
+
+    const slaRulesResult = await pool.query('SELECT companyId, priority, categoryId, maxHours FROM SLARules')
+    const slaRulesByCompany = {}
+    slaRulesResult.rows.forEach(r => {
+      if (!slaRulesByCompany[r.companyid]) slaRulesByCompany[r.companyid] = []
+      slaRulesByCompany[r.companyid].push(r)
+    })
+
+    const byBucket = {}
+    for (const row of resolvedRawResult.rows) {
+      const key = new Date(row.bucket).toISOString()
+      if (!byBucket[key]) byBucket[key] = { bucket: row.bucket, resolvedcnt: 0, eligiblecnt: 0, withinslacnt: 0 }
+      byBucket[key].resolvedcnt++
+
+      const rules = slaRulesByCompany[row.companyid] || []
+      const rule = rules.find(r => r.priority === row.priority && r.categoryid === null)
+      if (rule) {
+        byBucket[key].eligiblecnt++
+        const hrs = businessHoursElapsed(row.createdat, row.resolvedat, businessHoursByCompany[row.companyid])
+        if (hrs <= rule.maxhours) byBucket[key].withinslacnt++
+      }
+    }
+
+    res.json(buildTrendSeries(bucketsResult.rows, createdResult.rows, Object.values(byBucket)))
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
