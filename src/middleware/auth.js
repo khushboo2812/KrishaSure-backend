@@ -67,15 +67,15 @@ function requirePlatformOwner(req, res, next) {
   next()
 }
 
-// platform_owner is included alongside superadmin/admin because
+// platform_owner is included alongside superadmin because
 // PlatformDashboard's "View My Company" only fakes role: "superadmin"
 // in localStorage — it never issues a new JWT, so req.user.role for a
 // platform owner using it is still their real, unchanged
-// "platform_owner". Any route requiring superadmin/admin must include
+// "platform_owner". Any route requiring superadmin must include
 // platform_owner too, or "View My Company" silently loses access to
 // it the moment this check is added.
-function requireAdminOrSuperadmin(req, res, next) {
-  if (req.user.role !== 'superadmin' && req.user.role !== 'admin' && req.user.role !== 'platform_owner') {
+function requireSuperadmin(req, res, next) {
+  if (req.user.role !== 'superadmin' && req.user.role !== 'platform_owner') {
     return res.status(403).json({ error: 'Access denied' })
   }
   next()
@@ -83,7 +83,7 @@ function requireAdminOrSuperadmin(req, res, next) {
 
 // For actions staff (agent and up) should be able to take on a ticket
 // but a client shouldn't — e.g. resolving it themselves or logging
-// hours against it. Deliberately permissive otherwise (agent, admin,
+// hours against it. Deliberately permissive otherwise (agent,
 // superadmin, platform_owner all pass) since this only needs to keep
 // clients out, not enforce finer-grained staff permissions.
 function requireNotClient(req, res, next) {
@@ -93,4 +93,4 @@ function requireNotClient(req, res, next) {
   next()
 }
 
-module.exports = { authenticateToken, requirePlatformOwner, requireAdminOrSuperadmin, requireNotClient, INACTIVE_COMPANY_MESSAGE, INACTIVE_MEMBERSHIP_MESSAGE }
+module.exports = { authenticateToken, requirePlatformOwner, requireSuperadmin, requireNotClient, INACTIVE_COMPANY_MESSAGE, INACTIVE_MEMBERSHIP_MESSAGE }

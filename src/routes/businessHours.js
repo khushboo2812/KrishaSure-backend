@@ -1,7 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const { pool } = require('../config/db')
-const { authenticateToken, requireAdminOrSuperadmin } = require('../middleware/auth')
+const { authenticateToken, requireSuperadmin } = require('../middleware/auth')
 const { validateBusinessHoursInput } = require('../utils/validateBusinessHours')
 
 router.get('/', authenticateToken, async (req, res) => {
@@ -24,7 +24,7 @@ router.get('/', authenticateToken, async (req, res) => {
 // hours, not platform-owner-gated like companies.js. Applies uniformly
 // to every company (internal and MSP alike); this is a per-company
 // setting, not per-client-org.
-router.put('/', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
+router.put('/', authenticateToken, requireSuperadmin, async (req, res) => {
   try {
     const { companyId } = req.user
     const validated = validateBusinessHoursInput(req.body)

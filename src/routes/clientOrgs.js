@@ -1,7 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const { pool } = require('../config/db')
-const { authenticateToken, requireAdminOrSuperadmin } = require('../middleware/auth')
+const { authenticateToken, requireSuperadmin } = require('../middleware/auth')
 const { isContractActive, advancePeriodIfDue, computeOrgBalance } = require('../utils/contractPeriod')
 const { generateSupportEmail } = require('../utils/supportEmail')
 const { validateBusinessHoursInput } = require('../utils/validateBusinessHours')
@@ -20,7 +20,7 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 })
 
-router.post('/', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
+router.post('/', authenticateToken, requireSuperadmin, async (req, res) => {
   try {
     const { companyId } = req.user
     const { name, hasHoursContract, contractedHours, resetCadence, overtimeHandling, contractEndDate } = req.body
@@ -38,7 +38,7 @@ router.post('/', authenticateToken, requireAdminOrSuperadmin, async (req, res) =
   }
 })
 
-router.delete('/:id', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
+router.delete('/:id', authenticateToken, requireSuperadmin, async (req, res) => {
   try {
     const { id } = req.params
     const { companyId } = req.user
@@ -62,7 +62,7 @@ function contractTermsChanged(org, next) {
     toText(org.overtimehandling) !== toText(next.overtimeHandling)
 }
 
-router.put('/:id', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
+router.put('/:id', authenticateToken, requireSuperadmin, async (req, res) => {
   try {
     const { id } = req.params
     const { companyId, email } = req.user
@@ -103,7 +103,7 @@ router.put('/:id', authenticateToken, requireAdminOrSuperadmin, async (req, res)
 // (POST / only generates one at creation time). Refuses to touch an org
 // that already has one — regenerating would silently break an address
 // someone may already be emailing.
-router.post('/:id/support-email', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
+router.post('/:id/support-email', authenticateToken, requireSuperadmin, async (req, res) => {
   try {
     const { id } = req.params
     const { companyId } = req.user
@@ -131,7 +131,7 @@ router.post('/:id/support-email', authenticateToken, requireAdminOrSuperadmin, a
 // to "use the company's hours" with { clear: true }. Optional — most
 // client orgs never set this and just inherit the company's config
 // (see getEffectiveBusinessHours in utils/businessHours.js).
-router.put('/:id/business-hours', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
+router.put('/:id/business-hours', authenticateToken, requireSuperadmin, async (req, res) => {
   try {
     const { id } = req.params
     const { companyId } = req.user
