@@ -5,6 +5,8 @@ const crypto = require('crypto')
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 
+const RESET_COOLDOWN_MS = 60 * 1000
+
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
   let password = ''
@@ -27,13 +29,27 @@ router.post('/request', async (req, res) => {
     }
 
     const person = result.rows[0]
+
+    // Without this, repeated requests for the same email each
+    // immediately overwrite the temp password and re-email it — no
+    // cooldown — so a caller could spam someone's inbox and keep
+    // invalidating whatever temp password they were just sent before
+    // they'd have a chance to use it. Same generic response either
+    // way, so this can't be used to probe whether an email exists.
+    if (person.lastpasswordresetrequestat) {
+      const elapsed = Date.now() - new Date(person.lastpasswordresetrequestat).getTime()
+      if (elapsed < RESET_COOLDOWN_MS) {
+        return res.json({ message: 'If this email exists, a reset link has been sent.' })
+      }
+    }
+
     const tempPassword = generateTempPassword()
     const hashedPassword = await bcrypt.hash(tempPassword, 10)
 
     // One password per person across every membership — resetting it
     // here resets access for all of them, same as changing it any other way.
     await pool.query(
-      'UPDATE People SET password = $1, mustChangePassword = true WHERE id = $2',
+      'UPDATE People SET password = $1, mustChangePassword = true, lastPasswordResetRequestAt = NOW() WHERE id = $2',
       [hashedPassword, person.id]
     )
 
