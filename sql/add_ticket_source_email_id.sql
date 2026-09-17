@@ -1,0 +1,16 @@
+-- Run by hand in the Supabase SQL editor (this repo has no migration
+-- runner — schema is managed directly in Supabase).
+--
+-- Resend retries inbound webhook delivery on failure or timeout, and
+-- can redeliver the exact same email.received event much later than
+-- the original send. Without a way to recognize "we already turned
+-- this email into a ticket", a stale retry creates a second, duplicate
+-- ticket out of nowhere, days after the sender's actual email — with
+-- no new email ever having been sent. sourceEmailId records which
+-- inbound email (Resend's email_id) a ticket came from, so a retried
+-- delivery can be short-circuited instead of duplicating the ticket.
+--
+-- Plain UNIQUE (no partial index needed) is enough: Postgres never
+-- treats NULLs as equal for uniqueness, so UI-created tickets — where
+-- sourceEmailId is always NULL — never collide with each other.
+ALTER TABLE Tickets ADD COLUMN IF NOT EXISTS sourceEmailId TEXT UNIQUE;

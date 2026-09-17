@@ -114,6 +114,17 @@ router.post('/', async (req, res) => {
       : (typeof to === 'string' ? [to] : [])
     replyFromAddress = recipientEmails[0] || null
 
+    // Resend retries this webhook on failure/timeout, and can redeliver
+    // the exact same email.received event much later than the original
+    // send. Without this, a stale retry of an email we already turned
+    // into a ticket creates a second, duplicate ticket out of nowhere —
+    // with no new email ever having been sent. Short-circuit before
+    // doing any further work (including the API call just below).
+    const alreadyProcessed = await pool.query('SELECT ticketId FROM Tickets WHERE sourceEmailId = $1', [email_id])
+    if (alreadyProcessed.rows.length > 0) {
+      return res.status(200).json({ ticketId: alreadyProcessed.rows[0].ticketid, duplicate: true })
+    }
+
     const { data: email, error } = await resend.emails.receiving.get(email_id)
     if (error) {
       console.error('Failed to fetch inbound email content:', error.message)
@@ -307,9 +318,23 @@ if (!defaultCategory) {
     const initialStatus = assignedTo ? 'Open/Assigned' : 'Open/Unassigned'
 
     const ticketInsertResult = await pool.query(
-      'INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId, status, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
-      [ticketId, subject || 'No subject', body, defaultCategory, defaultPriority, assignedTo, senderEmail, companyId, clientOrgId, initialStatus, 'email']
+      `INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId, status, source, sourceEmailId)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       ON CONFLICT (sourceEmailId) DO NOTHING
+       RETURNING id`,
+      [ticketId, subject || 'No subject', body, defaultCategory, defaultPriority, assignedTo, senderEmail, companyId, clientOrgId, initialStatus, 'email', email_id]
     )
+
+    if (ticketInsertResult.rows.length === 0) {
+      // Lost a race with a concurrent duplicate delivery of this same
+      // email — the alreadyProcessed check above passed, but another
+      // request inserted first between then and now. The ticketId
+      // minted above is simply discarded; ticket IDs aren't required
+      // to be gapless.
+      const existing = await pool.query('SELECT ticketId FROM Tickets WHERE sourceEmailId = $1', [email_id])
+      return res.status(200).json({ ticketId: existing.rows[0]?.ticketid, duplicate: true })
+    }
+
     const ticketDbId = ticketInsertResult.rows[0].id
 
     if (email.attachments && email.attachments.length > 0) {
