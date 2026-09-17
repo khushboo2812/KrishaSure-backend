@@ -17,16 +17,22 @@ function generateTempPassword() {
   return password
 }
 
-// Shared by DELETE /:id (remove from company) and PUT /:id/active
-// (deactivate) — both must refuse to take away a company's only
-// superadmin, or nobody would be left with the access needed to manage
-// users, client orgs, or company settings at all. Checked against
-// other ACTIVE superadmins only: one that's already deactivated isn't
-// a usable fallback either.
-async function isLastActiveSuperadmin(pool, { membership, companyId }) {
-  if (membership.role !== 'superadmin') return false
+// Shared by DELETE /:id (remove from company), PUT /:id/active
+// (deactivate), and PUT /:id/role (moving off admin/superadmin) — all
+// three must refuse to take away a company's only remaining manager
+// (admin or superadmin), or nobody would be left with the access
+// needed to manage users, client orgs, or company settings at all.
+//
+// Originally only checked superadmin specifically — but that leaves a
+// real gap for a company whose managers are all plain admins (no
+// superadmin at all): nothing stopped deactivating every single one of
+// them, one at a time, with no warning, right up to a total lockout.
+// Checked against other ACTIVE admins/superadmins only: one that's
+// already deactivated isn't a usable fallback either.
+async function isLastActiveManager(pool, { membership, companyId }) {
+  if (membership.role !== 'superadmin' && membership.role !== 'admin') return false
   const result = await pool.query(
-    `SELECT COUNT(*) FROM Memberships WHERE companyId = $1 AND role = 'superadmin' AND isActive = true AND id != $2`,
+    `SELECT COUNT(*) FROM Memberships WHERE companyId = $1 AND role IN ('superadmin', 'admin') AND isActive = true AND id != $2`,
     [companyId, membership.id]
   )
   return parseInt(result.rows[0].count, 10) === 0
@@ -638,12 +644,16 @@ router.put('/:id/role', authenticateToken, async (req, res) => {
       return res.json({ message: `${membership.name} already has this role` })
     }
 
-    // Refuse to move a company's only active superadmin to any other
-    // role — same guard as removing/deactivating them (see
-    // isLastActiveSuperadmin above), for the same reason: nobody would
-    // be left with the access needed to manage the company at all.
-    if (await isLastActiveSuperadmin(pool, { membership, companyId })) {
-      return res.status(400).json({ error: 'Cannot change the role of the only superadmin in this company. Promote another user to superadmin first.' })
+    // Refuse to move a company's last active manager (admin or
+    // superadmin) out of the manager tier entirely — same guard as
+    // removing/deactivating them (see isLastActiveManager above), for
+    // the same reason: nobody would be left with the access needed to
+    // manage the company at all. Demoting superadmin -> admin (or
+    // promoting the other way) is fine either way — the company still
+    // has a manager after the change, just not this exact role.
+    const staysManager = newRole === 'superadmin' || newRole === 'admin'
+    if (!staysManager && await isLastActiveManager(pool, { membership, companyId })) {
+      return res.status(400).json({ error: 'Cannot change the role of the last active admin/superadmin in this company. Promote another user to admin or superadmin first.' })
     }
 
     // Moving off 'agent' cuts off their ability to hold tickets, so it
@@ -701,8 +711,8 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     )
     const membership = result.rows[0]
 
-    if (membership && await isLastActiveSuperadmin(pool, { membership, companyId })) {
-      return res.status(400).json({ error: 'Cannot remove the only superadmin in this company. Promote another user to superadmin first.' })
+    if (membership && await isLastActiveManager(pool, { membership, companyId })) {
+      return res.status(400).json({ error: 'Cannot remove the last active admin/superadmin in this company. Promote another user to admin or superadmin first.' })
     }
 
     if (membership && membership.role === 'agent') {
@@ -758,8 +768,8 @@ router.put('/:id/active', authenticateToken, async (req, res) => {
     }
 
     if (!isActive) {
-      if (await isLastActiveSuperadmin(pool, { membership, companyId })) {
-        return res.status(400).json({ error: 'Cannot deactivate the only superadmin in this company. Promote another user to superadmin first.' })
+      if (await isLastActiveManager(pool, { membership, companyId })) {
+        return res.status(400).json({ error: 'Cannot deactivate the last active admin/superadmin in this company. Promote another user to admin or superadmin first.' })
       }
 
       const conflict = await reassignOpenTicketsIfNeeded({
