@@ -600,6 +600,84 @@ router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
   }
 })
 
+// PUT change a membership's role within the acting admin's own company.
+// :id is a membershipId (like /active below), not a personId — role is
+// company-scoped, so the same person could hold a different role in a
+// different company. Any of superadmin/admin/platform_owner can promote
+// or demote someone else, including turning an existing client into an
+// admin — only granting superadmin itself is restricted, and only a
+// superadmin (or platform_owner) can hand that out.
+const VALID_ROLES = ['client', 'agent', 'admin', 'superadmin']
+
+router.put('/:id/role', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId, role: callerRole } = req.user
+    const { role: newRole, reassignTo } = req.body
+
+    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
+      return res.status(403).json({ error: 'Access denied' })
+    }
+    if (!VALID_ROLES.includes(newRole)) {
+      return res.status(400).json({ error: 'Invalid role' })
+    }
+    if (newRole === 'superadmin' && callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
+      return res.status(403).json({ error: 'Only a superadmin can grant superadmin access' })
+    }
+
+    const result = await pool.query(
+      `SELECT m.id, m.role, p.name, p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.id = $1 AND m.companyId = $2`,
+      [id, companyId]
+    )
+    const membership = result.rows[0]
+    if (!membership) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    if (membership.role === newRole) {
+      return res.json({ message: `${membership.name} already has this role` })
+    }
+
+    // Refuse to move a company's only active superadmin to any other
+    // role — same guard as removing/deactivating them (see
+    // isLastActiveSuperadmin above), for the same reason: nobody would
+    // be left with the access needed to manage the company at all.
+    if (await isLastActiveSuperadmin(pool, { membership, companyId })) {
+      return res.status(400).json({ error: 'Cannot change the role of the only superadmin in this company. Promote another user to superadmin first.' })
+    }
+
+    // Moving off 'agent' cuts off their ability to hold tickets, so it
+    // needs the same "don't leave tickets stranded" flow used when
+    // deactivating or removing an agent.
+    if (membership.role === 'agent') {
+      const conflict = await reassignOpenTicketsIfNeeded({
+        membership, companyId, reassignTo,
+        beforeGerund: 'changing their role',
+        pastTense: 'moved to a different role'
+      })
+      if (conflict) return res.status(conflict.status).json(conflict.body)
+
+      await pool.query('DELETE FROM Agents WHERE email = $1 AND companyId = $2', [membership.email, companyId])
+    }
+
+    if (newRole === 'agent') {
+      const existingAgent = await pool.query('SELECT id FROM Agents WHERE email = $1 AND companyId = $2', [membership.email, companyId])
+      if (existingAgent.rows.length === 0) {
+        await pool.query(
+          'INSERT INTO Agents (name, email, level, skills, companyId) VALUES ($1, $2, $3, $4, $5)',
+          [membership.name, membership.email, 'Junior', '', companyId]
+        )
+      }
+    }
+
+    await pool.query('UPDATE Memberships SET role = $1 WHERE id = $2 AND companyId = $3', [newRole, id, companyId])
+
+    res.json({ message: `${membership.name} is now ${newRole}` })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // DELETE — :id is a membershipId, not a personId. Removes only this
 // person's membership in the acting admin's own company; the Person
 // row (and any membership they hold in other companies) is left
