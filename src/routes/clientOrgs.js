@@ -4,6 +4,7 @@ const { pool } = require('../config/db')
 const { authenticateToken, requireAdminOrSuperadmin } = require('../middleware/auth')
 const { isContractActive, advancePeriodIfDue, computeOrgBalance } = require('../utils/contractPeriod')
 const { generateSupportEmail } = require('../utils/supportEmail')
+const { validateBusinessHoursInput } = require('../utils/validateBusinessHours')
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -121,6 +122,43 @@ router.post('/:id/support-email', authenticateToken, requireAdminOrSuperadmin, a
     await pool.query('UPDATE ClientOrganizations SET supportEmail = $1 WHERE id = $2 AND companyId = $3', [supportEmail, id, companyId])
 
     res.json({ message: 'Support email address added successfully!!', supportEmail })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PUT this client org's own business-hours override, or clear it back
+// to "use the company's hours" with { clear: true }. Optional — most
+// client orgs never set this and just inherit the company's config
+// (see getEffectiveBusinessHours in utils/businessHours.js).
+router.put('/:id/business-hours', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId } = req.user
+
+    const existing = await pool.query('SELECT id FROM ClientOrganizations WHERE id = $1 AND companyId = $2', [id, companyId])
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Client organization not found' })
+    }
+
+    if (req.body.clear) {
+      await pool.query(
+        'UPDATE ClientOrganizations SET businessDays = NULL, businessHoursStart = NULL, businessHoursEnd = NULL, timezone = NULL WHERE id = $1 AND companyId = $2',
+        [id, companyId]
+      )
+      return res.json({ message: 'Now using the company\'s business hours' })
+    }
+
+    const validated = validateBusinessHoursInput(req.body)
+    if (validated.error) {
+      return res.status(400).json({ error: validated.error })
+    }
+
+    await pool.query(
+      'UPDATE ClientOrganizations SET businessDays = $1, businessHoursStart = $2, businessHoursEnd = $3, timezone = $4 WHERE id = $5 AND companyId = $6',
+      [validated.businessDays, validated.businessHoursStart, validated.businessHoursEnd, validated.timezone, id, companyId]
+    )
+    res.json({ message: 'Business hours updated successfully!!' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
