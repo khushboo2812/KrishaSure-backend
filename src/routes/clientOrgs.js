@@ -1,7 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const { pool } = require('../config/db')
-const { authenticateToken } = require('../middleware/auth')
+const { authenticateToken, requireAdminOrSuperadmin } = require('../middleware/auth')
 const { isContractActive, advancePeriodIfDue, computeOrgBalance } = require('../utils/contractPeriod')
 const { generateSupportEmail } = require('../utils/supportEmail')
 
@@ -19,7 +19,7 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 })
 
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
   try {
     const { companyId } = req.user
     const { name, hasHoursContract, contractedHours, resetCadence, overtimeHandling, contractEndDate } = req.body
@@ -37,7 +37,7 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 })
 
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete('/:id', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
   try {
     const { id } = req.params
     const { companyId } = req.user
@@ -61,7 +61,7 @@ function contractTermsChanged(org, next) {
     toText(org.overtimehandling) !== toText(next.overtimeHandling)
 }
 
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put('/:id', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
   try {
     const { id } = req.params
     const { companyId, email } = req.user
@@ -102,7 +102,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
 // (POST / only generates one at creation time). Refuses to touch an org
 // that already has one — regenerating would silently break an address
 // someone may already be emailing.
-router.post('/:id/support-email', authenticateToken, async (req, res) => {
+router.post('/:id/support-email', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
   try {
     const { id } = req.params
     const { companyId } = req.user

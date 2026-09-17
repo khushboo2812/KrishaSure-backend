@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
-const { authenticateToken } = require('../middleware/auth')
+const { authenticateToken, requireNotClient } = require('../middleware/auth')
 const { generateTicketId } = require('../utils/ticketId')
 const { getTicketReplyFromAddress } = require('../utils/supportEmail')
 
@@ -117,7 +117,7 @@ const agentEmail = agentResult.rows[0]?.email
   }
 })
 
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put('/:id', authenticateToken, requireNotClient, async (req, res) => {
   try {
     const { id } = req.params
     const { companyId, email } = req.user

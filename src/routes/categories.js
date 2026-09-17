@@ -1,7 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const { pool } = require('../config/db')
-const { authenticateToken } = require('../middleware/auth')
+const { authenticateToken, requireAdminOrSuperadmin } = require('../middleware/auth')
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -13,7 +13,7 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 })
 
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
   try {
     const { companyId } = req.user
     const { name, description } = req.body
@@ -27,7 +27,7 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 })
 
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put('/:id', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
   try {
     const { id } = req.params
     const { companyId } = req.user
@@ -42,7 +42,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
   }
 })
 
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete('/:id', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
   try {
     const { id } = req.params
     const { companyId } = req.user
