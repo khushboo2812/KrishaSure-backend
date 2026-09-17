@@ -88,6 +88,7 @@ const agentEmail = agentResult.rows[0]?.email
             <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Title</strong></td><td style="padding: 8px;">${title}</td></tr>
             <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Assigned To</strong></td><td style="padding: 8px;">${assignedTo}</td></tr>
           </table>
+          <p style="color: #64748B; font-size: 12px;">⏱️ Response/resolution timers only count business hours — time outside the support team's working hours doesn't count against your SLA.</p>
           <br/>
           <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
         </div>
