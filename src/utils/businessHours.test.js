@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { businessHoursElapsed, zonedTimeToUtc, getZonedParts } = require('./businessHours')
+const { businessHoursElapsed, zonedTimeToUtc, getZonedParts, getEffectiveBusinessHours } = require('./businessHours')
 
 const STANDARD = { businessDays: 'Mon,Tue,Wed,Thu,Fri', businessHoursStart: '09:00', businessHoursEnd: '17:00', timezone: 'UTC' }
 
@@ -106,5 +106,22 @@ test('businessHoursElapsed: custom config', async (t) => {
   await t.test('missing config falls back to the Mon-Fri 9-5 UTC default', () => {
     const hrs = businessHoursElapsed('2026-09-15T10:00:00Z', '2026-09-15T14:00:00Z', null)
     assert.equal(hrs, 4)
+  })
+})
+
+test('getEffectiveBusinessHours', async (t) => {
+  const company = STANDARD
+  const clientOverride = { businessDays: 'Mon,Tue,Wed,Thu,Fri,Sat', businessHoursStart: '08:00', businessHoursEnd: '20:00', timezone: 'Asia/Kolkata' }
+
+  await t.test('no client org (null) falls back to the company\'s hours', () => {
+    assert.deepEqual(getEffectiveBusinessHours(company, null), company)
+  })
+
+  await t.test('a client org with no override configured (businessDays null) falls back to the company\'s hours', () => {
+    assert.deepEqual(getEffectiveBusinessHours(company, { businessDays: null }), company)
+  })
+
+  await t.test('a client org with an override configured uses its own hours', () => {
+    assert.deepEqual(getEffectiveBusinessHours(company, clientOverride), clientOverride)
   })
 })

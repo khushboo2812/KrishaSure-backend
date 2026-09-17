@@ -87,4 +87,14 @@ function businessHoursElapsed(start, end, businessHours) {
   return businessMillisecondsElapsed(new Date(start), new Date(end), businessHours) / (60 * 60 * 1000)
 }
 
-module.exports = { businessMillisecondsElapsed, businessHoursElapsed, getZonedParts, zonedTimeToUtc }
+// A client org can optionally override its company's business hours
+// (e.g. it's in a different timezone, or negotiated different support
+// hours) — set together, all four fields or none, by the settings
+// endpoint in routes/clientOrgs.js. businessDays is the "configured"
+// signal: null means no override, fall back to the company's hours.
+function getEffectiveBusinessHours(companyBusinessHours, clientOrgBusinessHours) {
+  if (clientOrgBusinessHours && clientOrgBusinessHours.businessDays) return clientOrgBusinessHours
+  return companyBusinessHours
+}
+
+module.exports = { businessMillisecondsElapsed, businessHoursElapsed, getEffectiveBusinessHours, getZonedParts, zonedTimeToUtc }
