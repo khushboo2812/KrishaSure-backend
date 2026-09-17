@@ -38,6 +38,39 @@ function isQuotaExceeded(err) {
   return /429|quota exceeded|resource_exhausted/i.test(err?.message || '')
 }
 
+// Attachments (a screenshot of an error, a photo of a device) ride
+// along as base64 in the JSON body — see index.js for the raised body-
+// size limit this needs. Kept deliberately best-effort: an oversized or
+// unsupported file is silently dropped rather than failing the whole
+// request, since losing one attachment shouldn't block a diagnosis that
+// can still run on the text (and whatever attachments did qualify).
+const MAX_ATTACHMENTS = 3
+const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024
+const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
+  'image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'
+])
+
+// The frontend sends FileReader's readAsDataURL() result as-is
+// ("data:image/png;base64,iVBORw0KG...") — Gemini's inlineData part
+// wants just the base64 payload, so this strips the data: URI prefix
+// when present rather than requiring the caller to.
+function normalizeBase64(data) {
+  const commaIndex = data.indexOf(',')
+  return typeof data === 'string' && data.startsWith('data:') && commaIndex !== -1
+    ? data.slice(commaIndex + 1)
+    : data
+}
+
+function buildAttachmentParts(attachments) {
+  if (!Array.isArray(attachments)) return []
+  return attachments
+    .filter(a => a && typeof a.data === 'string' && ALLOWED_ATTACHMENT_MIME_TYPES.has(a.mimeType))
+    .slice(0, MAX_ATTACHMENTS)
+    .map(a => ({ mimeType: a.mimeType, data: normalizeBase64(a.data) }))
+    .filter(a => Buffer.byteLength(a.data, 'base64') <= MAX_ATTACHMENT_BYTES)
+    .map(a => ({ inlineData: a }))
+}
+
 function respondWithAiError(res, err) {
   if (isRetryableOverload(err)) {
     return res.status(503).json({ error: "The AI service is temporarily overloaded — please try again in a moment." })
@@ -69,6 +102,8 @@ Please provide:
 2. 3 step-by-step troubleshooting steps the user can try
 3. Whether this needs urgent attention
 
+If an image or file is attached, factor in whatever it actually shows (a screenshot of an error, a photo of a device, etc.) alongside the title and description above.
+
 Keep your response concise and practical. Do not mention or guess at a ticket category — that's decided separately.`
 }
 
@@ -94,12 +129,13 @@ async function generateWithRetry(fn) {
 // available. Please update your code to use models/gemini-3.6-flash").
 // Swapped to the model name Google's own error told us to use.
 router.post('/suggest', authenticateToken, async (req, res) => {
-  const { title, description } = req.body
+  const { title, description, attachments } = req.body
   const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" })
+  const parts = [{ text: buildInitialPrompt(title, description) }, ...buildAttachmentParts(attachments)]
 
   try {
     const text = await generateWithRetry(async () => {
-      const result = await model.generateContent(buildInitialPrompt(title, description))
+      const result = await model.generateContent(parts)
       const response = await result.response
       return response.text()
     })

@@ -17,6 +17,12 @@ const agentRoutes = require('./routes/agents')
 const app = express()
 
 app.use(cors())
+// AI suggestions can carry image/PDF attachments as base64 in the JSON
+// body — comfortably over the default 100kb express.json() limit below.
+// Scoped to just this router (registered first, so it wins for /api/ai
+// requests; body-parser skips re-parsing a body it's already parsed)
+// rather than raising the limit for every route in the app.
+app.use('/api/ai', express.json({ limit: '12mb' }))
 app.use(express.json())
 
 connectDB()
