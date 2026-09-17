@@ -3,6 +3,35 @@ const router = express.Router()
 const { pool } = require('../config/db')
 const { authenticateToken, requireAdminOrSuperadmin } = require('../middleware/auth')
 const { parseWindow, buildTrendSeries } = require('../utils/reportTrends')
+const { businessHoursElapsed } = require('../utils/businessHours')
+
+async function getCompanyBusinessHours(companyId) {
+  const result = await pool.query(
+    'SELECT businessDays, businessHoursStart, businessHoursEnd, timezone FROM Companies WHERE id = $1',
+    [companyId]
+  )
+  const row = result.rows[0]
+  return row && {
+    businessDays: row.businessdays,
+    businessHoursStart: row.businesshoursstart,
+    businessHoursEnd: row.businesshoursend,
+    timezone: row.timezone
+  }
+}
+
+// SLA eligibility/breach can't be a SQL EXTRACT(EPOCH ...) comparison
+// once "hours elapsed" means business hours, not wall-clock — there's
+// no portable way to run this app's Intl-based, DST-correct business-
+// hours algorithm inside Postgres. Classified in JS instead, per
+// ticket, against the company's own configured hours.
+function isSlaEligible(ticket, slaRules) {
+  return !!slaRules.find(r => r.priority === ticket.priority && r.categoryid === null)
+}
+function isWithinSla(ticket, slaRules, businessHours) {
+  const rule = slaRules.find(r => r.priority === ticket.priority && r.categoryid === null)
+  if (!rule) return null
+  return businessHoursElapsed(ticket.createdat, ticket.resolvedat, businessHours) <= rule.maxhours
+}
 
 // GET per-agent performance for the company, within the date-range window.
 // Superadmin/admin only — this is the comparative, cross-agent view.
@@ -11,27 +40,22 @@ router.get('/agent-performance', authenticateToken, requireAdminOrSuperadmin, as
     const { companyId } = req.user
     const { start } = parseWindow(req.query)
 
-    // Resolved-ticket stats, open count (unwindowed — it's a live
-    // snapshot), and SLA eligibility/breach counts, per agent. SLA
-    // matching is priority-only (categoryId IS NULL rules), matching
-    // the existing simplified SLA logic used elsewhere in this app —
-    // category-specific SLA rules aren't applied anywhere yet.
-    const perfResult = await pool.query(
-      `SELECT
-         a.id, a.name, a.email,
-         COUNT(t.id) FILTER (WHERE t.status = 'Resolved' AND t.resolvedAt >= $2) AS resolvedcount,
-         COUNT(t.id) FILTER (WHERE t.status != 'Resolved') AS opencount,
-         AVG(EXTRACT(EPOCH FROM (t.resolvedAt - t.createdAt))) FILTER (WHERE t.status = 'Resolved' AND t.resolvedAt >= $2) AS avgresolutionseconds,
-         COUNT(t.id) FILTER (WHERE t.status = 'Resolved' AND t.resolvedAt >= $2 AND sla.maxHours IS NOT NULL) AS slaeligiblecount,
-         COUNT(t.id) FILTER (WHERE t.status = 'Resolved' AND t.resolvedAt >= $2 AND sla.maxHours IS NOT NULL AND EXTRACT(EPOCH FROM (t.resolvedAt - t.createdAt)) / 3600 > sla.maxHours) AS breachedcount
-       FROM Agents a
-       LEFT JOIN Tickets t ON t.assignedTo = a.name AND t.companyId = a.companyId
-       LEFT JOIN SLARules sla ON sla.priority = t.priority AND sla.categoryId IS NULL AND sla.companyId = a.companyId
-       WHERE a.companyId = $1
-       GROUP BY a.id, a.name, a.email
-       ORDER BY a.name`,
-      [companyId, start]
+    const businessHours = await getCompanyBusinessHours(companyId)
+    const slaRulesResult = await pool.query('SELECT priority, categoryId, maxHours FROM SLARules WHERE companyId = $1', [companyId])
+    const slaRules = slaRulesResult.rows
+
+    // Every ticket assigned to any of this company's agents — resolved-
+    // in-window stats and the live open count both come from this one
+    // set, computed in JS below rather than as separate SQL aggregates.
+    const ticketsResult = await pool.query(
+      `SELECT t.id, t.assignedTo, t.status, t.priority, t.createdAt, t.resolvedAt
+       FROM Tickets t
+       JOIN Agents a ON a.name = t.assignedTo AND a.companyId = t.companyId
+       WHERE t.companyId = $1`,
+      [companyId]
     )
+
+    const agentsResult = await pool.query('SELECT id, name, email FROM Agents WHERE companyId = $1 ORDER BY name', [companyId])
 
     // Hours logged is computed separately (not joined into the query
     // above) to avoid a join fan-out between Tickets and HoursLog
@@ -47,18 +71,28 @@ router.get('/agent-performance', authenticateToken, requireAdminOrSuperadmin, as
     const hoursByEmail = {}
     hoursResult.rows.forEach(r => { hoursByEmail[r.loggedby] = parseFloat(r.totalhours) })
 
-    const agents = perfResult.rows.map(r => {
-      const eligible = parseInt(r.slaeligiblecount)
-      const breached = parseInt(r.breachedcount)
+    const agents = agentsResult.rows.map(agent => {
+      const ticketsForAgent = ticketsResult.rows.filter(t => t.assignedto === agent.name)
+      const resolvedInWindow = ticketsForAgent.filter(t => t.status === 'Resolved' && t.resolvedat && new Date(t.resolvedat) >= start)
+      const openCount = ticketsForAgent.filter(t => t.status !== 'Resolved').length
+
+      const resolutionHours = resolvedInWindow.map(t => (new Date(t.resolvedat) - new Date(t.createdat)) / (1000 * 60 * 60))
+      const avgResolutionHours = resolutionHours.length > 0
+        ? resolutionHours.reduce((sum, h) => sum + h, 0) / resolutionHours.length
+        : null
+
+      const eligible = resolvedInWindow.filter(t => isSlaEligible(t, slaRules))
+      const breached = eligible.filter(t => isWithinSla(t, slaRules, businessHours) === false)
+
       return {
-        id: r.id,
-        name: r.name,
-        email: r.email,
-        resolvedCount: parseInt(r.resolvedcount),
-        openCount: parseInt(r.opencount),
-        avgResolutionHours: r.avgresolutionseconds !== null ? parseFloat(r.avgresolutionseconds) / 3600 : null,
-        slaBreachRate: eligible > 0 ? (breached / eligible) * 100 : null,
-        hoursLogged: hoursByEmail[r.email] || 0
+        id: agent.id,
+        name: agent.name,
+        email: agent.email,
+        resolvedCount: resolvedInWindow.length,
+        openCount,
+        avgResolutionHours,
+        slaBreachRate: eligible.length > 0 ? (breached.length / eligible.length) * 100 : null,
+        hoursLogged: hoursByEmail[agent.email] || 0
       }
     })
 
@@ -128,21 +162,34 @@ router.get('/ticket-trends', authenticateToken, requireAdminOrSuperadmin, async 
       [bucket, companyId, start]
     )
 
-    // Compliance is priority-only (categoryId IS NULL SLA rules),
-    // matching the existing simplified SLA logic elsewhere in this app.
-    const resolvedResult = await pool.query(
-      `SELECT date_trunc($1, t.resolvedAt) AS bucket,
-         COUNT(*) AS resolvedcnt,
-         COUNT(*) FILTER (WHERE sla.maxHours IS NOT NULL) AS eligiblecnt,
-         COUNT(*) FILTER (WHERE sla.maxHours IS NOT NULL AND EXTRACT(EPOCH FROM (t.resolvedAt - t.createdAt)) / 3600 <= sla.maxHours) AS withinslacnt
+    // Bucketing itself (date_trunc) stays in SQL — unaffected by
+    // business hours, and doing it here guarantees these bucket keys
+    // line up exactly with bucketsResult above. Only the eligible/
+    // within-SLA classification per ticket happens in JS, since that
+    // needs the business-hours-aware algorithm SQL can't run.
+    const resolvedRawResult = await pool.query(
+      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.priority, t.createdAt, t.resolvedAt
        FROM Tickets t
-       LEFT JOIN SLARules sla ON sla.priority = t.priority AND sla.categoryId IS NULL AND sla.companyId = t.companyId
-       WHERE t.companyId = $2 AND t.status = 'Resolved' AND t.resolvedAt >= $3
-       GROUP BY 1`,
+       WHERE t.companyId = $2 AND t.status = 'Resolved' AND t.resolvedAt >= $3`,
       [bucket, companyId, start]
     )
 
-    res.json(buildTrendSeries(bucketsResult.rows, createdResult.rows, resolvedResult.rows))
+    const businessHours = await getCompanyBusinessHours(companyId)
+    const slaRulesResult = await pool.query('SELECT priority, categoryId, maxHours FROM SLARules WHERE companyId = $1', [companyId])
+    const slaRules = slaRulesResult.rows
+
+    const byBucket = {}
+    for (const row of resolvedRawResult.rows) {
+      const key = new Date(row.bucket).toISOString()
+      if (!byBucket[key]) byBucket[key] = { bucket: row.bucket, resolvedcnt: 0, eligiblecnt: 0, withinslacnt: 0 }
+      byBucket[key].resolvedcnt++
+      if (isSlaEligible(row, slaRules)) {
+        byBucket[key].eligiblecnt++
+        if (isWithinSla(row, slaRules, businessHours)) byBucket[key].withinslacnt++
+      }
+    }
+
+    res.json(buildTrendSeries(bucketsResult.rows, createdResult.rows, Object.values(byBucket)))
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
