@@ -1,22 +1,8 @@
 const express = require('express')
 const router = express.Router()
 const { pool } = require('../config/db')
-const { authenticateToken } = require('../middleware/auth')
+const { authenticateToken, requireAdminOrSuperadmin } = require('../middleware/auth')
 const { parseWindow, buildTrendSeries } = require('../utils/reportTrends')
-
-// platform_owner is included alongside superadmin/admin because
-// PlatformDashboard's "View My Company" only fakes role: "superadmin"
-// in localStorage — it never issues a new JWT, so req.user.role here is
-// still the platform owner's real, unchanged role. No other route in
-// this app checks role at all (only companyId), so that's always been
-// enough for "View My Company" to work everywhere except here, where a
-// role check is actually enforced.
-function requireAdminOrSuperadmin(req, res, next) {
-  if (req.user.role !== 'superadmin' && req.user.role !== 'admin' && req.user.role !== 'platform_owner') {
-    return res.status(403).json({ error: 'Access denied' })
-  }
-  next()
-}
 
 // GET per-agent performance for the company, within the date-range window.
 // Superadmin/admin only — this is the comparative, cross-agent view.
