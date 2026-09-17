@@ -481,6 +481,14 @@ router.put('/:id/password', authenticateToken, async (req, res) => {
     const { password } = req.body
     const { personId, companyId, role } = req.user
 
+    // Matches the minimum already enforced client-side (Dashboard.jsx's
+    // reset-password modal, Login.jsx's own change-password flow) — the
+    // frontend check alone doesn't stop a direct API call with a
+    // trivial password.
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' })
+    }
+
     const isOwnPassword = String(id) === String(personId)
     if (!isOwnPassword) {
       if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {

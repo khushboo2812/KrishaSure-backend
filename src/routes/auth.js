@@ -6,6 +6,8 @@ const { pool } = require('../config/db')
 const { authenticateToken, INACTIVE_COMPANY_MESSAGE, INACTIVE_MEMBERSHIP_MESSAGE } = require('../middleware/auth')
 
 const JWT_SECRET = process.env.JWT_SECRET || 'krishasure_secret'
+const MAX_FAILED_LOGIN_ATTEMPTS = 5
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000
 
 async function getMemberships(personId) {
   const result = await pool.query(
@@ -78,9 +80,31 @@ router.post('/login', async (req, res) => {
     }
 
     const person = result.rows[0]
+
+    // Checked before the password compare, not after — a locked account
+    // must stay locked regardless of whether this particular attempt
+    // happens to guess right, otherwise the lockout can be probed around
+    // by just trying again once it "expires" mid-guess.
+    if (person.lockeduntil && new Date(person.lockeduntil) > new Date()) {
+      return res.status(429).json({ error: 'Too many failed login attempts. Try again in a few minutes.' })
+    }
+
     const isMatch = await bcrypt.compare(password, person.password)
     if (!isMatch) {
+      const attempts = (person.failedloginattempts || 0) + 1
+      const lockingNow = attempts >= MAX_FAILED_LOGIN_ATTEMPTS
+      await pool.query(
+        'UPDATE People SET failedLoginAttempts = $1, lockedUntil = $2 WHERE id = $3',
+        [lockingNow ? 0 : attempts, lockingNow ? new Date(Date.now() + LOCKOUT_DURATION_MS) : null, person.id]
+      )
+      if (lockingNow) {
+        return res.status(429).json({ error: 'Too many failed login attempts. Try again in a few minutes.' })
+      }
       return res.status(401).json({ error: 'Invalid email or password' })
+    }
+
+    if (person.failedloginattempts > 0 || person.lockeduntil) {
+      await pool.query('UPDATE People SET failedLoginAttempts = 0, lockedUntil = NULL WHERE id = $1', [person.id])
     }
 
     const memberships = await getMemberships(person.id)
