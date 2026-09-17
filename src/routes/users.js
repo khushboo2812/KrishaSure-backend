@@ -610,10 +610,14 @@ router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
 // :id is a membershipId (like /active below), not a personId — role is
 // company-scoped, so the same person could hold a different role in a
 // different company. Any of superadmin/admin/platform_owner can promote
-// or demote someone else, including turning an existing client into an
-// admin — only granting superadmin itself is restricted, and only a
-// superadmin (or platform_owner) can hand that out.
-const VALID_ROLES = ['client', 'agent', 'admin', 'superadmin']
+// or demote someone else among the company-staff roles — only granting
+// superadmin itself is restricted, and only a superadmin (or
+// platform_owner) can hand that out. Clients are a different kind of
+// user entirely (an external contact tied to a ClientOrganization, not
+// company staff), so 'client' is deliberately not a valid target here
+// and a client's own membership can't be moved into a staff role either
+// — see the membership.role === 'client' check below.
+const VALID_ROLES = ['agent', 'admin', 'superadmin']
 
 router.put('/:id/role', authenticateToken, async (req, res) => {
   try {
@@ -642,6 +646,10 @@ router.put('/:id/role', authenticateToken, async (req, res) => {
 
     if (membership.role === newRole) {
       return res.json({ message: `${membership.name} already has this role` })
+    }
+
+    if (membership.role === 'client') {
+      return res.status(400).json({ error: 'A client cannot be turned into company staff here. Remove them and add a new user with the desired role instead.' })
     }
 
     // Refuse to move a company's last active manager (admin or
