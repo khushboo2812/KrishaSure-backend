@@ -3,7 +3,7 @@ const router = express.Router()
 const { pool } = require('../config/db')
 const { authenticateToken, requireAdminOrSuperadmin } = require('../middleware/auth')
 const { parseWindow, buildTrendSeries } = require('../utils/reportTrends')
-const { businessHoursElapsed } = require('../utils/businessHours')
+const { businessHoursElapsed, getEffectiveBusinessHours } = require('../utils/businessHours')
 
 async function getCompanyBusinessHours(companyId) {
   const result = await pool.query(
@@ -19,18 +19,35 @@ async function getCompanyBusinessHours(companyId) {
   }
 }
 
+// A client org can optionally override its company's business hours
+// (see getEffectiveBusinessHours) — keyed by clientOrgId so a
+// per-ticket lookup during SLA classification is a plain object read.
+async function getClientOrgBusinessHoursById(companyId) {
+  const result = await pool.query(
+    'SELECT id, businessDays, businessHoursStart, businessHoursEnd, timezone FROM ClientOrganizations WHERE companyId = $1',
+    [companyId]
+  )
+  const byId = {}
+  result.rows.forEach(r => {
+    byId[r.id] = { businessDays: r.businessdays, businessHoursStart: r.businesshoursstart, businessHoursEnd: r.businesshoursend, timezone: r.timezone }
+  })
+  return byId
+}
+
 // SLA eligibility/breach can't be a SQL EXTRACT(EPOCH ...) comparison
 // once "hours elapsed" means business hours, not wall-clock — there's
 // no portable way to run this app's Intl-based, DST-correct business-
 // hours algorithm inside Postgres. Classified in JS instead, per
-// ticket, against the company's own configured hours.
+// ticket, against the effective hours for that ticket's client org
+// (its own override if it has one, otherwise the company's).
 function isSlaEligible(ticket, slaRules) {
   return !!slaRules.find(r => r.priority === ticket.priority && r.categoryid === null)
 }
-function isWithinSla(ticket, slaRules, businessHours) {
+function isWithinSla(ticket, slaRules, companyBusinessHours, clientOrgBusinessHoursById) {
   const rule = slaRules.find(r => r.priority === ticket.priority && r.categoryid === null)
   if (!rule) return null
-  return businessHoursElapsed(ticket.createdat, ticket.resolvedat, businessHours) <= rule.maxhours
+  const effective = getEffectiveBusinessHours(companyBusinessHours, clientOrgBusinessHoursById?.[ticket.clientorgid])
+  return businessHoursElapsed(ticket.createdat, ticket.resolvedat, effective) <= rule.maxhours
 }
 
 // GET per-agent performance for the company, within the date-range window.
@@ -41,6 +58,7 @@ router.get('/agent-performance', authenticateToken, requireAdminOrSuperadmin, as
     const { start } = parseWindow(req.query)
 
     const businessHours = await getCompanyBusinessHours(companyId)
+    const clientOrgBusinessHoursById = await getClientOrgBusinessHoursById(companyId)
     const slaRulesResult = await pool.query('SELECT priority, categoryId, maxHours FROM SLARules WHERE companyId = $1', [companyId])
     const slaRules = slaRulesResult.rows
 
@@ -48,7 +66,7 @@ router.get('/agent-performance', authenticateToken, requireAdminOrSuperadmin, as
     // in-window stats and the live open count both come from this one
     // set, computed in JS below rather than as separate SQL aggregates.
     const ticketsResult = await pool.query(
-      `SELECT t.id, t.assignedTo, t.status, t.priority, t.createdAt, t.resolvedAt
+      `SELECT t.id, t.assignedTo, t.status, t.priority, t.createdAt, t.resolvedAt, t.clientOrgId
        FROM Tickets t
        JOIN Agents a ON a.name = t.assignedTo AND a.companyId = t.companyId
        WHERE t.companyId = $1`,
@@ -82,7 +100,7 @@ router.get('/agent-performance', authenticateToken, requireAdminOrSuperadmin, as
         : null
 
       const eligible = resolvedInWindow.filter(t => isSlaEligible(t, slaRules))
-      const breached = eligible.filter(t => isWithinSla(t, slaRules, businessHours) === false)
+      const breached = eligible.filter(t => isWithinSla(t, slaRules, businessHours, clientOrgBusinessHoursById) === false)
 
       return {
         id: agent.id,
@@ -168,13 +186,14 @@ router.get('/ticket-trends', authenticateToken, requireAdminOrSuperadmin, async 
     // within-SLA classification per ticket happens in JS, since that
     // needs the business-hours-aware algorithm SQL can't run.
     const resolvedRawResult = await pool.query(
-      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.priority, t.createdAt, t.resolvedAt
+      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.priority, t.createdAt, t.resolvedAt, t.clientOrgId
        FROM Tickets t
        WHERE t.companyId = $2 AND t.status = 'Resolved' AND t.resolvedAt >= $3`,
       [bucket, companyId, start]
     )
 
     const businessHours = await getCompanyBusinessHours(companyId)
+    const clientOrgBusinessHoursById = await getClientOrgBusinessHoursById(companyId)
     const slaRulesResult = await pool.query('SELECT priority, categoryId, maxHours FROM SLARules WHERE companyId = $1', [companyId])
     const slaRules = slaRulesResult.rows
 
@@ -185,7 +204,7 @@ router.get('/ticket-trends', authenticateToken, requireAdminOrSuperadmin, async 
       byBucket[key].resolvedcnt++
       if (isSlaEligible(row, slaRules)) {
         byBucket[key].eligiblecnt++
-        if (isWithinSla(row, slaRules, businessHours)) byBucket[key].withinslacnt++
+        if (isWithinSla(row, slaRules, businessHours, clientOrgBusinessHoursById)) byBucket[key].withinslacnt++
       }
     }
 

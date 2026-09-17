@@ -4,7 +4,7 @@ const { pool } = require('../config/db')
 const { authenticateToken, requirePlatformOwner } = require('../middleware/auth')
 const { parseWindow, buildTrendSeries, buildSignupsSeries } = require('../utils/reportTrends')
 const { isContractActive, advancePeriodIfDue, computeOrgBalance } = require('../utils/contractPeriod')
-const { businessHoursElapsed } = require('../utils/businessHours')
+const { businessHoursElapsed, getEffectiveBusinessHours } = require('../utils/businessHours')
 
 // Everything in this file is platform-owner only and deliberately never
 // filters by companyId — it's the cross-company view. Company-scoped
@@ -55,7 +55,7 @@ router.get('/ticket-trends', async (req, res) => {
     // business-hours config, so there's no single SQL expression that
     // could classify every row correctly.
     const resolvedRawResult = await pool.query(
-      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.companyId, t.priority, t.createdAt, t.resolvedAt
+      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.companyId, t.clientOrgId, t.priority, t.createdAt, t.resolvedAt
        FROM Tickets t
        WHERE t.status = 'Resolved' AND t.resolvedAt >= $2`,
       [bucket, start]
@@ -65,6 +65,20 @@ router.get('/ticket-trends', async (req, res) => {
     const businessHoursByCompany = {}
     companiesResult.rows.forEach(c => {
       businessHoursByCompany[c.id] = {
+        businessDays: c.businessdays,
+        businessHoursStart: c.businesshoursstart,
+        businessHoursEnd: c.businesshoursend,
+        timezone: c.timezone
+      }
+    })
+
+    // Keyed by clientOrgId (not companyId — multiple client orgs, each
+    // possibly under a different company, can each have their own
+    // override) so a per-ticket lookup is a plain object read.
+    const clientOrgsResult = await pool.query('SELECT id, businessDays, businessHoursStart, businessHoursEnd, timezone FROM ClientOrganizations')
+    const businessHoursByClientOrg = {}
+    clientOrgsResult.rows.forEach(c => {
+      businessHoursByClientOrg[c.id] = {
         businessDays: c.businessdays,
         businessHoursStart: c.businesshoursstart,
         businessHoursEnd: c.businesshoursend,
@@ -89,7 +103,8 @@ router.get('/ticket-trends', async (req, res) => {
       const rule = rules.find(r => r.priority === row.priority && r.categoryid === null)
       if (rule) {
         byBucket[key].eligiblecnt++
-        const hrs = businessHoursElapsed(row.createdat, row.resolvedat, businessHoursByCompany[row.companyid])
+        const effective = getEffectiveBusinessHours(businessHoursByCompany[row.companyid], businessHoursByClientOrg[row.clientorgid])
+        const hrs = businessHoursElapsed(row.createdat, row.resolvedat, effective)
         if (hrs <= rule.maxhours) byBucket[key].withinslacnt++
       }
     }
