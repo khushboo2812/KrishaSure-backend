@@ -50,11 +50,13 @@ function respondWithAiError(res, err) {
 
 // Whoever's filing the ticket may not have picked the right category
 // yet — it's entirely possible they don't know what's actually wrong,
-// which is exactly why they're asking the AI. Treating their pick as a
-// given fact could steer the diagnosis toward the wrong kind of
-// problem, so it's deliberately left out of the prompt; the AI decides
-// a likely category itself from the title/description instead of
-// trusting one that might be wrong.
+// which is exactly why they're asking the AI. Category selection is
+// the ticket form's own job (and the human triaging it, afterward);
+// this endpoint sticks to diagnosis/troubleshooting/urgency and
+// doesn't touch category at all — not the user's pick, not its own
+// guess — so there's nothing here that could steer toward the wrong
+// kind of problem or clutter the answer with something nobody asked
+// the AI to weigh in on.
 function buildInitialPrompt(title, description) {
   return `You are an IT support assistant for KrishaSure ticketing system.
 
@@ -66,9 +68,8 @@ Please provide:
 1. A brief diagnosis of the likely cause
 2. 3 step-by-step troubleshooting steps the user can try
 3. Whether this needs urgent attention
-4. Which category this most likely belongs to (e.g. Hardware, Software, Network, Account/Access, General) — decide this yourself from the title and description; don't assume any category the person filing it may have already picked, since they may not know what's actually wrong yet
 
-Keep your response concise and practical.`
+Keep your response concise and practical. Do not mention or guess at a ticket category — that's decided separately.`
 }
 
 async function generateWithRetry(fn) {
