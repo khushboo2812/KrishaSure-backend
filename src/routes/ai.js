@@ -40,10 +40,12 @@ function isQuotaExceeded(err) {
 
 // Attachments (a screenshot of an error, a photo of a device) ride
 // along as base64 in the JSON body — see index.js for the raised body-
-// size limit this needs. Kept deliberately best-effort: an oversized or
-// unsupported file is silently dropped rather than failing the whole
-// request, since losing one attachment shouldn't block a diagnosis that
-// can still run on the text (and whatever attachments did qualify).
+// size limit this needs. Deliberately strict, not best-effort: silently
+// dropping an unsupported/oversized file used to leave the person
+// thinking the AI had looked at something it never saw. Any attachment
+// that doesn't qualify now fails the whole request with a clear reason
+// instead — the frontend already filters before sending, so reaching
+// this validation at all means something slipped past that check.
 const MAX_ATTACHMENTS = 3
 const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024
 const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
@@ -61,14 +63,29 @@ function normalizeBase64(data) {
     : data
 }
 
-function buildAttachmentParts(attachments) {
-  if (!Array.isArray(attachments)) return []
-  return attachments
-    .filter(a => a && typeof a.data === 'string' && ALLOWED_ATTACHMENT_MIME_TYPES.has(a.mimeType))
-    .slice(0, MAX_ATTACHMENTS)
-    .map(a => ({ mimeType: a.mimeType, data: normalizeBase64(a.data) }))
-    .filter(a => Buffer.byteLength(a.data, 'base64') <= MAX_ATTACHMENT_BYTES)
-    .map(a => ({ inlineData: a }))
+// Returns { parts } on success or { error } on the first attachment
+// that fails validation — never both, and never a partial result, so
+// the caller can't accidentally run a diagnosis "missing" an attachment
+// the person thought they'd included.
+function validateAttachments(attachments) {
+  if (attachments === undefined || attachments === null) return { parts: [] }
+  if (!Array.isArray(attachments)) return { error: 'attachments must be an array' }
+  if (attachments.length > MAX_ATTACHMENTS) {
+    return { error: `Only up to ${MAX_ATTACHMENTS} attachments are supported at once — remove some and try again.` }
+  }
+
+  const parts = []
+  for (const a of attachments) {
+    if (!a || typeof a.data !== 'string' || !ALLOWED_ATTACHMENT_MIME_TYPES.has(a.mimeType)) {
+      return { error: `${a?.fileName ? `"${a.fileName}" isn't` : 'One of the attachments is not'} a supported file type — the AI can only look at images (PNG, JPEG, WEBP, HEIC, HEIF) or PDFs.` }
+    }
+    const data = normalizeBase64(a.data)
+    if (Buffer.byteLength(data, 'base64') > MAX_ATTACHMENT_BYTES) {
+      return { error: `${a.fileName ? `"${a.fileName}" is` : 'One of the attachments is'} too large for the AI to look at (max 4MB) — remove it and try again.` }
+    }
+    parts.push({ inlineData: { mimeType: a.mimeType, data } })
+  }
+  return { parts }
 }
 
 function respondWithAiError(res, err) {
@@ -82,14 +99,14 @@ function respondWithAiError(res, err) {
 }
 
 // Whoever's filing the ticket may not have picked the right category
-// yet — it's entirely possible they don't know what's actually wrong,
-// which is exactly why they're asking the AI. Category selection is
-// the ticket form's own job (and the human triaging it, afterward);
-// this endpoint sticks to diagnosis/troubleshooting/urgency and
-// doesn't touch category at all — not the user's pick, not its own
-// guess — so there's nothing here that could steer toward the wrong
-// kind of problem or clutter the answer with something nobody asked
-// the AI to weigh in on.
+// (or priority) yet — it's entirely possible they don't know what's
+// actually wrong, which is exactly why they're asking the AI. Category
+// and urgency/priority are the ticket form's own job (and the human
+// triaging it, afterward); this endpoint sticks to diagnosis and
+// troubleshooting steps only — not the user's pick for either field,
+// not its own guess — so there's nothing here that could steer toward
+// the wrong kind of problem or duplicate something the ticket itself
+// already owns.
 function buildInitialPrompt(title, description) {
   return `You are an IT support assistant for KrishaSure ticketing system.
 
@@ -100,11 +117,10 @@ A support ticket has been raised with the following details:
 Please provide:
 1. A brief diagnosis of the likely cause
 2. 3 step-by-step troubleshooting steps the user can try
-3. Whether this needs urgent attention
 
 If an image or file is attached, factor in whatever it actually shows (a screenshot of an error, a photo of a device, etc.) alongside the title and description above.
 
-Keep your response concise and practical. Do not mention or guess at a ticket category — that's decided separately.`
+Keep your response concise and practical. Do not mention or guess at a ticket category, and do not assess urgency/priority — both are decided separately, on the ticket itself.`
 }
 
 async function generateWithRetry(fn) {
@@ -130,8 +146,12 @@ async function generateWithRetry(fn) {
 // Swapped to the model name Google's own error told us to use.
 router.post('/suggest', authenticateToken, async (req, res) => {
   const { title, description, attachments } = req.body
+  const { parts: attachmentParts, error: attachmentError } = validateAttachments(attachments)
+  if (attachmentError) {
+    return res.status(400).json({ error: attachmentError })
+  }
   const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" })
-  const parts = [{ text: buildInitialPrompt(title, description) }, ...buildAttachmentParts(attachments)]
+  const parts = [{ text: buildInitialPrompt(title, description) }, ...attachmentParts]
 
   try {
     const text = await generateWithRetry(async () => {
