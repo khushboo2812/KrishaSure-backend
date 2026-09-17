@@ -18,6 +18,21 @@ function generateTempPassword() {
 }
 
 // Shared by DELETE /:id (remove from company) and PUT /:id/active
+// (deactivate) — both must refuse to take away a company's only
+// superadmin, or nobody would be left with the access needed to manage
+// users, client orgs, or company settings at all. Checked against
+// other ACTIVE superadmins only: one that's already deactivated isn't
+// a usable fallback either.
+async function isLastActiveSuperadmin(pool, { membership, companyId }) {
+  if (membership.role !== 'superadmin') return false
+  const result = await pool.query(
+    `SELECT COUNT(*) FROM Memberships WHERE companyId = $1 AND role = 'superadmin' AND isActive = true AND id != $2`,
+    [companyId, membership.id]
+  )
+  return parseInt(result.rows[0].count, 10) === 0
+}
+
+// Shared by DELETE /:id (remove from company) and PUT /:id/active
 // (deactivate) — both cut off an agent's ability to hold tickets, so
 // both need the same "don't leave tickets stranded" flow: if they have
 // open tickets, refuse until the caller supplies reassignTo (another
@@ -556,6 +571,10 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     )
     const membership = result.rows[0]
 
+    if (membership && await isLastActiveSuperadmin(pool, { membership, companyId })) {
+      return res.status(400).json({ error: 'Cannot remove the only superadmin in this company. Promote another user to superadmin first.' })
+    }
+
     if (membership && membership.role === 'agent') {
       const conflict = await reassignOpenTicketsIfNeeded({
         membership, companyId, reassignTo,
@@ -605,6 +624,10 @@ router.put('/:id/active', authenticateToken, async (req, res) => {
     }
 
     if (!isActive) {
+      if (await isLastActiveSuperadmin(pool, { membership, companyId })) {
+        return res.status(400).json({ error: 'Cannot deactivate the only superadmin in this company. Promote another user to superadmin first.' })
+      }
+
       const conflict = await reassignOpenTicketsIfNeeded({
         membership, companyId, reassignTo,
         beforeGerund: 'deactivating',
