@@ -1,14 +1,19 @@
 const express = require('express')
 const router = express.Router()
 const { GoogleGenerativeAI } = require('@google/generative-ai')
+const { authenticateToken } = require('../middleware/auth')
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
 
-router.post('/suggest', async (req, res) => {
+// gemini-2.0-flash was retired by Google (confirmed live: the API
+// returned 404 "This model models/gemini-2.0-flash is no longer
+// available. Please update your code to use models/gemini-3.6-flash").
+// Swapped to the model name Google's own error told us to use.
+router.post('/suggest', authenticateToken, async (req, res) => {
   try {
     const { title, description, category } = req.body
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" })
+    const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" })
 
     const prompt = `You are an IT support assistant for KrishaSure ticketing system.
     
