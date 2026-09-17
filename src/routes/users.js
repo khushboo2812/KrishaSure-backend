@@ -137,8 +137,23 @@ router.get('/', authenticateToken, async (req, res) => {
 
 router.post('/', authenticateToken, async (req, res) => {
   try {
-    const { companyId } = req.user
+    const { companyId, role: callerRole } = req.user
     const { name, email, role, level, skills, clientOrgId, alsoAgent } = req.body
+
+    // Without this, any authenticated member of a company — including a
+    // client — could call this directly (bypassing the User Management
+    // UI, which is superadmin-only) and create a brand-new user with
+    // whatever role they chose, up to and including superadmin: a full
+    // privilege escalation to admin control of their own company.
+    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
+      return res.status(403).json({ error: 'Access denied' })
+    }
+    // A plain admin granting someone superadmin would be handing out
+    // access beyond their own — only an existing superadmin can create
+    // another one.
+    if (role === 'superadmin' && callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
+      return res.status(403).json({ error: 'Only a superadmin can grant superadmin access' })
+    }
 
     if (!isValidEmail(email)) {
       return res.status(400).json({ error: 'Enter a valid email address' })
@@ -211,8 +226,17 @@ router.post('/', authenticateToken, async (req, res) => {
 // POST / found an existing Person for the entered email.
 router.post('/link-membership', authenticateToken, async (req, res) => {
   try {
-    const { companyId } = req.user
+    const { companyId, role: callerRole } = req.user
     const { personId, role, clientOrgId, level, skills, alsoAgent } = req.body
+
+    // Same privilege-escalation guard as POST / above — this is the
+    // other path to creating a membership with an arbitrary role.
+    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
+      return res.status(403).json({ error: 'Access denied' })
+    }
+    if (role === 'superadmin' && callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
+      return res.status(403).json({ error: 'Only a superadmin can grant superadmin access' })
+    }
 
     const personResult = await pool.query('SELECT * FROM People WHERE id = $1', [personId])
     const person = personResult.rows[0]
@@ -352,8 +376,12 @@ router.post('/verify/:token/confirm', async (req, res) => {
 router.put('/:id/name', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    const { companyId } = req.user
+    const { companyId, role } = req.user
     const { name } = req.body
+
+    if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
+      return res.status(403).json({ error: 'Access denied' })
+    }
 
     // Verify the acting admin's company actually has a membership for
     // this person before letting them rename a Person record — renaming
@@ -391,7 +419,11 @@ router.put('/:id/name', authenticateToken, async (req, res) => {
 router.post('/:id/resend-verification', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    const { companyId } = req.user
+    const { companyId, role } = req.user
+
+    if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
+      return res.status(403).json({ error: 'Access denied' })
+    }
 
     const membership = await pool.query('SELECT id FROM Memberships WHERE personId = $1 AND companyId = $2', [id, companyId])
     if (membership.rows.length === 0) {
@@ -451,7 +483,7 @@ router.put('/:id/password', authenticateToken, async (req, res) => {
 
     const isOwnPassword = String(id) === String(personId)
     if (!isOwnPassword) {
-      if (role !== 'superadmin' && role !== 'admin') {
+      if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
         return res.status(403).json({ error: 'Access denied' })
       }
       const membership = await pool.query('SELECT id FROM Memberships WHERE personId = $1 AND companyId = $2', [id, companyId])
@@ -474,8 +506,12 @@ router.put('/:id/password', authenticateToken, async (req, res) => {
 router.put('/:id/agent-details', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    const { companyId } = req.user
+    const { companyId, role } = req.user
     const { level, skills } = req.body
+
+    if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
+      return res.status(403).json({ error: 'Access denied' })
+    }
 
     const result = await pool.query(
       `SELECT p.name, p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.personId = $1 AND m.companyId = $2`,
@@ -509,7 +545,11 @@ router.put('/:id/agent-details', authenticateToken, async (req, res) => {
 router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    const { companyId } = req.user
+    const { companyId, role } = req.user
+
+    if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
+      return res.status(403).json({ error: 'Access denied' })
+    }
 
     const membership = await pool.query('SELECT id FROM Memberships WHERE personId = $1 AND companyId = $2', [id, companyId])
     if (membership.rows.length === 0) {
@@ -562,8 +602,12 @@ router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    const { companyId } = req.user
+    const { companyId, role: callerRole } = req.user
     const { reassignTo } = req.body || {}
+
+    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
+      return res.status(403).json({ error: 'Access denied' })
+    }
 
     const result = await pool.query(
       `SELECT m.id, m.role, p.name, p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.id = $1 AND m.companyId = $2`,
@@ -611,8 +655,12 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 router.put('/:id/active', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
-    const { companyId } = req.user
+    const { companyId, role: callerRole } = req.user
     const { isActive, reassignTo } = req.body
+
+    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
+      return res.status(403).json({ error: 'Access denied' })
+    }
 
     const membershipResult = await pool.query(
       `SELECT m.id, m.role, p.name, p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.id = $1 AND m.companyId = $2`,
