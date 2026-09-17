@@ -4,10 +4,15 @@ const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 const { authenticateToken } = require('../middleware/auth')
 const { getTicketReplyFromAddress } = require('../utils/supportEmail')
+const { ticketBelongsToCompany, commentBelongsToCompany } = require('../utils/ticketAccess')
 
 router.get('/:ticketId', authenticateToken, async (req, res) => {
   try {
     const { ticketId } = req.params
+    const { companyId } = req.user
+    if (!(await ticketBelongsToCompany(pool, ticketId, companyId))) {
+      return res.status(404).json({ error: 'Ticket not found' })
+    }
     const result = await pool.query(
       'SELECT * FROM TicketComments WHERE ticketId = $1 ORDER BY createdAt ASC',
       [ticketId]
@@ -22,7 +27,11 @@ router.post('/:ticketId', authenticateToken, async (req, res) => {
   try {
     const { ticketId } = req.params
     const { comment } = req.body
-    const { name, email } = req.user
+    const { name, email, companyId } = req.user
+
+    if (!(await ticketBelongsToCompany(pool, ticketId, companyId))) {
+      return res.status(404).json({ error: 'Ticket not found' })
+    }
 
     await pool.query(
       'INSERT INTO TicketComments (ticketId, authorName, authorEmail, comment) VALUES ($1, $2, $3, $4)',
@@ -88,10 +97,10 @@ router.put('/:commentId', authenticateToken, async (req, res) => {
   try {
     const { commentId } = req.params
     const { comment } = req.body
-    const { email } = req.user
+    const { email, companyId } = req.user
 
     const existing = await pool.query('SELECT * FROM TicketComments WHERE id = $1', [commentId])
-    if (existing.rows.length === 0) {
+    if (existing.rows.length === 0 || !(await commentBelongsToCompany(pool, commentId, companyId))) {
       return res.status(404).json({ error: 'Comment not found' })
     }
 
@@ -110,10 +119,10 @@ router.put('/:commentId', authenticateToken, async (req, res) => {
 router.delete('/:commentId', authenticateToken, async (req, res) => {
   try {
     const { commentId } = req.params
-    const { email } = req.user
+    const { email, companyId } = req.user
 
     const existing = await pool.query('SELECT * FROM TicketComments WHERE id = $1', [commentId])
-    if (existing.rows.length === 0) {
+    if (existing.rows.length === 0 || !(await commentBelongsToCompany(pool, commentId, companyId))) {
       return res.status(404).json({ error: 'Comment not found' })
     }
 

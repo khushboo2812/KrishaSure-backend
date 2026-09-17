@@ -126,6 +126,10 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
     const ticket = ticketResult.rows[0]
 
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' })
+    }
+
     await pool.query(
       'UPDATE Tickets SET status = $1, assignedTo = $2, resolvedAt = $3 WHERE id = $4 AND companyId = $5',
       [status, assignedTo, resolvedAt, id, companyId]
