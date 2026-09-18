@@ -1,7 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const { pool } = require('../config/db')
-const { authenticateToken, requireAdminOrSuperadmin } = require('../middleware/auth')
+const { authenticateToken, requireSuperadmin } = require('../middleware/auth')
 const { parseWindow, buildTrendSeries } = require('../utils/reportTrends')
 const { businessHoursElapsed, getEffectiveBusinessHours } = require('../utils/businessHours')
 
@@ -52,7 +52,7 @@ function isWithinSla(ticket, slaRules, companyBusinessHours, clientOrgBusinessHo
 
 // GET per-agent performance for the company, within the date-range window.
 // Superadmin/admin only — this is the comparative, cross-agent view.
-router.get('/agent-performance', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
+router.get('/agent-performance', authenticateToken, requireSuperadmin, async (req, res) => {
   try {
     const { companyId } = req.user
     const { start } = parseWindow(req.query)
@@ -161,7 +161,7 @@ router.get('/my-performance', authenticateToken, async (req, res) => {
 
 // GET ticket volume (created vs resolved) and SLA compliance %,
 // time-bucketed over the date-range window. Superadmin/admin only.
-router.get('/ticket-trends', authenticateToken, requireAdminOrSuperadmin, async (req, res) => {
+router.get('/ticket-trends', authenticateToken, requireSuperadmin, async (req, res) => {
   try {
     const { companyId } = req.user
     const { bucket, now, start } = parseWindow(req.query)

@@ -18,21 +18,16 @@ function generateTempPassword() {
 }
 
 // Shared by DELETE /:id (remove from company), PUT /:id/active
-// (deactivate), and PUT /:id/role (moving off admin/superadmin) — all
-// three must refuse to take away a company's only remaining manager
-// (admin or superadmin), or nobody would be left with the access
-// needed to manage users, client orgs, or company settings at all.
-//
-// Originally only checked superadmin specifically — but that leaves a
-// real gap for a company whose managers are all plain admins (no
-// superadmin at all): nothing stopped deactivating every single one of
-// them, one at a time, with no warning, right up to a total lockout.
-// Checked against other ACTIVE admins/superadmins only: one that's
-// already deactivated isn't a usable fallback either.
-async function isLastActiveManager(pool, { membership, companyId }) {
-  if (membership.role !== 'superadmin' && membership.role !== 'admin') return false
+// (deactivate), and PUT /:id/role (moving off superadmin) — all three
+// must refuse to take away a company's only remaining superadmin, or
+// nobody would be left with the access needed to manage users, client
+// orgs, or company settings at all. Checked against other ACTIVE
+// superadmins only: one that's already deactivated isn't a usable
+// fallback either.
+async function isLastActiveSuperadmin(pool, { membership, companyId }) {
+  if (membership.role !== 'superadmin') return false
   const result = await pool.query(
-    `SELECT COUNT(*) FROM Memberships WHERE companyId = $1 AND role IN ('superadmin', 'admin') AND isActive = true AND id != $2`,
+    `SELECT COUNT(*) FROM Memberships WHERE companyId = $1 AND role = 'superadmin' AND isActive = true AND id != $2`,
     [companyId, membership.id]
   )
   return parseInt(result.rows[0].count, 10) === 0
@@ -150,15 +145,9 @@ router.post('/', authenticateToken, async (req, res) => {
     // client — could call this directly (bypassing the User Management
     // UI, which is superadmin-only) and create a brand-new user with
     // whatever role they chose, up to and including superadmin: a full
-    // privilege escalation to admin control of their own company.
-    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
+    // privilege escalation to control of their own company.
+    if (callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
-    }
-    // A plain admin granting someone superadmin would be handing out
-    // access beyond their own — only an existing superadmin can create
-    // another one.
-    if (role === 'superadmin' && callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
-      return res.status(403).json({ error: 'Only a superadmin can grant superadmin access' })
     }
 
     if (!isValidEmail(email)) {
@@ -196,7 +185,7 @@ router.post('/', authenticateToken, async (req, res) => {
       [personId, companyId, role, clientOrgId || null]
     )
 
-    if (role === 'agent' || (role === 'admin' && alsoAgent)) {
+    if (role === 'agent' || (role === 'superadmin' && alsoAgent)) {
       await pool.query(
         'INSERT INTO Agents (name, email, level, skills, companyId) VALUES ($1, $2, $3, $4, $5)',
         [name, email, level || 'Junior', skills || '', companyId]
@@ -237,11 +226,8 @@ router.post('/link-membership', authenticateToken, async (req, res) => {
 
     // Same privilege-escalation guard as POST / above — this is the
     // other path to creating a membership with an arbitrary role.
-    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
+    if (callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
-    }
-    if (role === 'superadmin' && callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
-      return res.status(403).json({ error: 'Only a superadmin can grant superadmin access' })
     }
 
     const personResult = await pool.query('SELECT * FROM People WHERE id = $1', [personId])
@@ -263,7 +249,7 @@ router.post('/link-membership', authenticateToken, async (req, res) => {
       [personId, companyId, role, clientOrgId || null]
     )
 
-    if (role === 'agent' || (role === 'admin' && alsoAgent)) {
+    if (role === 'agent' || (role === 'superadmin' && alsoAgent)) {
       await pool.query(
         'INSERT INTO Agents (name, email, level, skills, companyId) VALUES ($1, $2, $3, $4, $5)',
         [person.name, person.email, level || 'Junior', skills || '', companyId]
@@ -385,7 +371,7 @@ router.put('/:id/name', authenticateToken, async (req, res) => {
     const { companyId, role } = req.user
     const { name } = req.body
 
-    if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
+    if (role !== 'superadmin' && role !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
 
@@ -427,7 +413,7 @@ router.post('/:id/resend-verification', authenticateToken, async (req, res) => {
     const { id } = req.params
     const { companyId, role } = req.user
 
-    if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
+    if (role !== 'superadmin' && role !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
 
@@ -497,7 +483,7 @@ router.put('/:id/password', authenticateToken, async (req, res) => {
 
     const isOwnPassword = String(id) === String(personId)
     if (!isOwnPassword) {
-      if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
+      if (role !== 'superadmin' && role !== 'platform_owner') {
         return res.status(403).json({ error: 'Access denied' })
       }
       const membership = await pool.query('SELECT id FROM Memberships WHERE personId = $1 AND companyId = $2', [id, companyId])
@@ -523,7 +509,7 @@ router.put('/:id/agent-details', authenticateToken, async (req, res) => {
     const { companyId, role } = req.user
     const { level, skills } = req.body
 
-    if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
+    if (role !== 'superadmin' && role !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
 
@@ -561,7 +547,7 @@ router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
     const { id } = req.params
     const { companyId, role } = req.user
 
-    if (role !== 'superadmin' && role !== 'admin' && role !== 'platform_owner') {
+    if (role !== 'superadmin' && role !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
 
@@ -609,15 +595,14 @@ router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
 // PUT change a membership's role within the acting admin's own company.
 // :id is a membershipId (like /active below), not a personId — role is
 // company-scoped, so the same person could hold a different role in a
-// different company. Any of superadmin/admin/platform_owner can promote
-// or demote someone else among the company-staff roles — only granting
-// superadmin itself is restricted, and only a superadmin (or
-// platform_owner) can hand that out. Clients are a different kind of
+// different company. Only superadmin or platform_owner can call this at
+// all (see the callerRole gate below), so granting superadmin is never
+// restricted any further than that. Clients are a different kind of
 // user entirely (an external contact tied to a ClientOrganization, not
 // company staff), so 'client' is deliberately not a valid target here
 // and a client's own membership can't be moved into a staff role either
 // — see the membership.role === 'client' check below.
-const VALID_ROLES = ['agent', 'admin', 'superadmin']
+const VALID_ROLES = ['agent', 'superadmin']
 
 router.put('/:id/role', authenticateToken, async (req, res) => {
   try {
@@ -625,14 +610,11 @@ router.put('/:id/role', authenticateToken, async (req, res) => {
     const { companyId, role: callerRole } = req.user
     const { role: newRole, reassignTo } = req.body
 
-    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
+    if (callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
     if (!VALID_ROLES.includes(newRole)) {
       return res.status(400).json({ error: 'Invalid role' })
-    }
-    if (newRole === 'superadmin' && callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
-      return res.status(403).json({ error: 'Only a superadmin can grant superadmin access' })
     }
 
     const result = await pool.query(
@@ -652,16 +634,12 @@ router.put('/:id/role', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'A client cannot be turned into company staff here. Remove them and add a new user with the desired role instead.' })
     }
 
-    // Refuse to move a company's last active manager (admin or
-    // superadmin) out of the manager tier entirely — same guard as
-    // removing/deactivating them (see isLastActiveManager above), for
-    // the same reason: nobody would be left with the access needed to
-    // manage the company at all. Demoting superadmin -> admin (or
-    // promoting the other way) is fine either way — the company still
-    // has a manager after the change, just not this exact role.
-    const staysManager = newRole === 'superadmin' || newRole === 'admin'
-    if (!staysManager && await isLastActiveManager(pool, { membership, companyId })) {
-      return res.status(400).json({ error: 'Cannot change the role of the last active admin/superadmin in this company. Promote another user to admin or superadmin first.' })
+    // Refuse to move a company's last active superadmin down to agent —
+    // same guard as removing/deactivating them (see
+    // isLastActiveSuperadmin above), for the same reason: nobody would
+    // be left with the access needed to manage the company at all.
+    if (newRole !== 'superadmin' && await isLastActiveSuperadmin(pool, { membership, companyId })) {
+      return res.status(400).json({ error: 'Cannot change the role of the last active superadmin in this company. Promote another user to superadmin first.' })
     }
 
     // Moving off 'agent' cuts off their ability to hold tickets, so it
@@ -709,7 +687,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const { companyId, role: callerRole } = req.user
     const { reassignTo } = req.body || {}
 
-    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
+    if (callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
 
@@ -719,8 +697,8 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     )
     const membership = result.rows[0]
 
-    if (membership && await isLastActiveManager(pool, { membership, companyId })) {
-      return res.status(400).json({ error: 'Cannot remove the last active admin/superadmin in this company. Promote another user to admin or superadmin first.' })
+    if (membership && await isLastActiveSuperadmin(pool, { membership, companyId })) {
+      return res.status(400).json({ error: 'Cannot remove the last active superadmin in this company. Promote another user to superadmin first.' })
     }
 
     if (membership && membership.role === 'agent') {
@@ -749,7 +727,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 // access to this one company only.
 //
 // Deactivating someone who's currently an active assignee (an agent,
-// or an admin also assigned tickets via alsoAgent — checked by an
+// or a superadmin also assigned tickets via alsoAgent — checked by an
 // Agents row existing for them, not by their Membership role literally
 // being 'agent') with open tickets still on their desk refuses to
 // silently leave those tickets stuck on someone who can no longer log
@@ -762,7 +740,7 @@ router.put('/:id/active', authenticateToken, async (req, res) => {
     const { companyId, role: callerRole } = req.user
     const { isActive, reassignTo } = req.body
 
-    if (callerRole !== 'superadmin' && callerRole !== 'admin' && callerRole !== 'platform_owner') {
+    if (callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
     }
 
@@ -776,8 +754,8 @@ router.put('/:id/active', authenticateToken, async (req, res) => {
     }
 
     if (!isActive) {
-      if (await isLastActiveManager(pool, { membership, companyId })) {
-        return res.status(400).json({ error: 'Cannot deactivate the last active admin/superadmin in this company. Promote another user to admin or superadmin first.' })
+      if (await isLastActiveSuperadmin(pool, { membership, companyId })) {
+        return res.status(400).json({ error: 'Cannot deactivate the last active superadmin in this company. Promote another user to superadmin first.' })
       }
 
       const conflict = await reassignOpenTicketsIfNeeded({

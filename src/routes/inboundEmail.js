@@ -342,7 +342,7 @@ if (!defaultCategory) {
     }
 
     const admins = await pool.query(
-      `SELECT p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.role IN ('superadmin', 'admin', 'platform_owner') AND m.companyId = $1`,
+      `SELECT p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.role IN ('superadmin', 'platform_owner') AND m.companyId = $1`,
       [companyId]
     )
     const adminEmails = admins.rows.map(a => a.email).join(',')
