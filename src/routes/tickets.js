@@ -98,6 +98,7 @@ const agentEmail = agentResult.rows[0]?.email
     )
 
     if (agentEmail) {
+      const hadAiConversation = aiConversation && aiConversation.length > 0
       sendEmail(
         agentEmail,
         `New Ticket Assigned - ${ticketId}`,
@@ -108,6 +109,7 @@ const agentEmail = agentResult.rows[0]?.email
               <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticketId}</td></tr>
               <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Client</strong></td><td style="padding: 8px;">${clientEmail}</td></tr>
             </table>
+            ${hadAiConversation ? '<p style="color: #7C3AED; font-size: 13px; font-weight: 600;">✨ This client already spoke with the AI assistant before filing this ticket and didn\'t get a fix — that conversation is saved on the ticket for you to review.</p>' : ''}
             <br/>
             <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
           </div>
