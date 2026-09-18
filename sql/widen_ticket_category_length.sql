@@ -1,0 +1,14 @@
+-- Run by hand in the Supabase SQL editor (this repo has no migration
+-- runner — schema is managed directly in Supabase).
+--
+-- Tickets.category (VARCHAR(50)) and Categories.name (VARCHAR(100))
+-- were created with different length limits, even though every
+-- ticket's category is always copied verbatim from an existing
+-- Categories.name (see the category select in Dashboard.jsx's Create
+-- Ticket form and tickets.js's POST /). Postgres doesn't silently
+-- truncate on insert — a category name between 51 and 100 characters
+-- would make every attempt to file a ticket in that category fail
+-- with a raw database error instead of a usable message. Widening to
+-- match is a safe, non-destructive change: existing rows (all <= 50
+-- chars already) are untouched.
+ALTER TABLE Tickets ALTER COLUMN category TYPE VARCHAR(100);
