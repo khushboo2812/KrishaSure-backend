@@ -1,0 +1,15 @@
+-- Run by hand in the Supabase SQL editor (this repo has no migration
+-- runner — schema is managed directly in Supabase).
+--
+-- Marks when a ticket was most recently reopened, so the live "open
+-- for" timer and SLA-breach math (routes/reports.js's getTimerStart,
+-- ticketHelpers.js's getTimeInfo/isSLABreached on the frontend) can
+-- measure the current round from this instead of the ticket's original
+-- createdAt — a ticket that already used up its SLA window before its
+-- first resolution would otherwise read as instantly breached again
+-- the moment it's reopened, and "open for" would keep counting the
+-- time it spent sitting resolved as if it still needed attention.
+-- createdAt itself is never touched — ticket age and sort order
+-- elsewhere still reflect when it was actually first filed. NULL for
+-- a ticket that's never been reopened.
+ALTER TABLE Tickets ADD COLUMN IF NOT EXISTS reopenedAt TIMESTAMPTZ;

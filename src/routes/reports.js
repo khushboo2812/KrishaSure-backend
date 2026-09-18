@@ -59,6 +59,18 @@ function resolveSlaRule(ticket, slaRules, categoryNameToId) {
   return slaRules.find(r => r.priority === ticket.priority && r.categoryid === null) || null
 }
 
+// A reopened ticket's current round is measured from when it was
+// reopened, not its original creation — otherwise every SLA/resolution-
+// time number for that round would be inflated by however long it sat
+// resolved in between, and would already read as "breached" the moment
+// it's reopened if the first round had used up the SLA window. The
+// original createdAt is left untouched everywhere else (ticket age,
+// sort order, audit trail) — this only affects which timestamp counts
+// as the start of the *current* open/resolved round.
+function getTimerStart(ticket) {
+  return ticket.reopenedat || ticket.createdat
+}
+
 // SLA eligibility/breach can't be a SQL EXTRACT(EPOCH ...) comparison
 // once "hours elapsed" means business hours, not wall-clock — there's
 // no portable way to run this app's Intl-based, DST-correct business-
@@ -73,7 +85,7 @@ function isWithinSla(ticket, slaRules, companyBusinessHours, clientOrgBusinessHo
   const rule = resolveSlaRule(ticket, slaRules, categoryNameToId)
   if (!rule || rule.maxhours === null) return null
   const effective = getEffectiveBusinessHours(companyBusinessHours, clientOrgBusinessHoursById?.[ticket.clientorgid])
-  return businessHoursElapsed(ticket.createdat, ticket.resolvedat, effective) <= rule.maxhours
+  return businessHoursElapsed(getTimerStart(ticket), ticket.resolvedat, effective) <= rule.maxhours
 }
 
 // GET per-agent performance for the company, within the date-range window.
@@ -93,7 +105,7 @@ router.get('/agent-performance', authenticateToken, requireSuperadmin, async (re
     // in-window stats and the live open count both come from this one
     // set, computed in JS below rather than as separate SQL aggregates.
     const ticketsResult = await pool.query(
-      `SELECT t.id, t.assignedTo, t.status, t.priority, t.category, t.createdAt, t.resolvedAt, t.clientOrgId
+      `SELECT t.id, t.assignedTo, t.status, t.priority, t.category, t.createdAt, t.resolvedAt, t.reopenedAt, t.clientOrgId
        FROM Tickets t
        JOIN Agents a ON a.name = t.assignedTo AND a.companyId = t.companyId
        WHERE t.companyId = $1`,
@@ -121,7 +133,7 @@ router.get('/agent-performance', authenticateToken, requireSuperadmin, async (re
       const resolvedInWindow = ticketsForAgent.filter(t => t.status === 'Resolved' && t.resolvedat && new Date(t.resolvedat) >= start)
       const openCount = ticketsForAgent.filter(t => t.status !== 'Resolved').length
 
-      const resolutionHours = resolvedInWindow.map(t => (new Date(t.resolvedat) - new Date(t.createdat)) / (1000 * 60 * 60))
+      const resolutionHours = resolvedInWindow.map(t => (new Date(t.resolvedat) - new Date(getTimerStart(t))) / (1000 * 60 * 60))
       const avgResolutionHours = resolutionHours.length > 0
         ? resolutionHours.reduce((sum, h) => sum + h, 0) / resolutionHours.length
         : null
@@ -213,7 +225,7 @@ router.get('/ticket-trends', authenticateToken, requireSuperadmin, async (req, r
     // within-SLA classification per ticket happens in JS, since that
     // needs the business-hours-aware algorithm SQL can't run.
     const resolvedRawResult = await pool.query(
-      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.priority, t.category, t.createdAt, t.resolvedAt, t.clientOrgId
+      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.priority, t.category, t.createdAt, t.resolvedAt, t.reopenedAt, t.clientOrgId
        FROM Tickets t
        WHERE t.companyId = $2 AND t.status = 'Resolved' AND t.resolvedAt >= $3`,
       [bucket, companyId, start]

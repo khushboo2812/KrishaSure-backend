@@ -128,7 +128,7 @@ const agentEmail = agentResult.rows[0]?.email
 router.put('/:id', authenticateToken, requireNotClient, async (req, res) => {
   try {
     const { id } = req.params
-    const { companyId, email } = req.user
+    const { companyId, email, name } = req.user
     const { status, assignedTo, resolvedAt, hoursSpent } = req.body
 
     const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
@@ -147,6 +147,18 @@ router.put('/:id', authenticateToken, requireNotClient, async (req, res) => {
       await pool.query(
         'INSERT INTO HoursLog (ticketId, hoursSpent, loggedBy) VALUES ($1, $2, $3)',
         [id, hoursSpent, email]
+      )
+    }
+
+    // Only 'Reopened' was ever logged here (see POST /:id/reopen below)
+    // — logging 'Resolved' too means the full created -> resolved ->
+    // reopened -> resolved... sequence is preserved permanently, even
+    // though reopenedAt (below) only tracks the most recent round for
+    // the live timers/SLA math.
+    if (status === "Resolved" && ticket.status !== "Resolved") {
+      await pool.query(
+        'INSERT INTO TicketHistory (ticketId, action, performedBy) VALUES ($1, $2, $3)',
+        [id, 'Resolved', name]
       )
     }
 
@@ -238,9 +250,16 @@ router.post('/:id/reopen', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'This ticket cannot be reopened as it was resolved more than 2 weeks ago. Please create a new ticket.' })
     }
 
-    // Reopen: keep same agent, change status back
+    // Reopen: keep same agent, change status back. reopenedAt marks the
+    // start of this new round — the live "open for"/SLA math (see
+    // reports.js's getTimerStart) uses it instead of the ticket's
+    // original createdAt, so a ticket that already used up its SLA
+    // window before its first resolution doesn't read as instantly
+    // breached again the moment it's reopened. createdAt itself is
+    // left untouched — ticket age and sort order elsewhere still
+    // reflect when it was actually first filed.
     await pool.query(
-      "UPDATE Tickets SET status = 'Open/Assigned' WHERE id = $1",
+      "UPDATE Tickets SET status = 'Open/Assigned', reopenedAt = NOW() WHERE id = $1",
       [id]
     )
 
