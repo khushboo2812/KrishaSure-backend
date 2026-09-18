@@ -34,18 +34,44 @@ async function getClientOrgBusinessHoursById(companyId) {
   return byId
 }
 
+// SLARules.categoryId is a Categories.id FK, but Tickets only stores
+// the category's name (see tickets.js) — this bridges the two so a
+// per-ticket SLA lookup can match a category-scoped rule at all.
+async function getCategoryNameToId(companyId) {
+  const result = await pool.query('SELECT id, name FROM Categories WHERE companyId = $1', [companyId])
+  const byName = {}
+  result.rows.forEach(r => { byName[r.name] = r.id })
+  return byName
+}
+
+// A rule scoped to this ticket's own category takes precedence over
+// the company-wide one for the same priority — lets a specific
+// category (e.g. one that isn't really "support" at all, like an
+// internal sales-pipeline category) opt out of the default SLA
+// entirely, without touching what every other category still gets.
+// A found category rule with maxHours NULL means "no SLA limit for
+// this category/priority" — deliberately, not the same as "no rule
+// configured" (which still falls through to the company-wide one).
+function resolveSlaRule(ticket, slaRules, categoryNameToId) {
+  const categoryId = categoryNameToId?.[ticket.category]
+  const categoryRule = categoryId !== undefined && slaRules.find(r => r.priority === ticket.priority && r.categoryid === categoryId)
+  if (categoryRule) return categoryRule
+  return slaRules.find(r => r.priority === ticket.priority && r.categoryid === null) || null
+}
+
 // SLA eligibility/breach can't be a SQL EXTRACT(EPOCH ...) comparison
 // once "hours elapsed" means business hours, not wall-clock — there's
 // no portable way to run this app's Intl-based, DST-correct business-
 // hours algorithm inside Postgres. Classified in JS instead, per
 // ticket, against the effective hours for that ticket's client org
 // (its own override if it has one, otherwise the company's).
-function isSlaEligible(ticket, slaRules) {
-  return !!slaRules.find(r => r.priority === ticket.priority && r.categoryid === null)
+function isSlaEligible(ticket, slaRules, categoryNameToId) {
+  const rule = resolveSlaRule(ticket, slaRules, categoryNameToId)
+  return !!(rule && rule.maxhours !== null)
 }
-function isWithinSla(ticket, slaRules, companyBusinessHours, clientOrgBusinessHoursById) {
-  const rule = slaRules.find(r => r.priority === ticket.priority && r.categoryid === null)
-  if (!rule) return null
+function isWithinSla(ticket, slaRules, companyBusinessHours, clientOrgBusinessHoursById, categoryNameToId) {
+  const rule = resolveSlaRule(ticket, slaRules, categoryNameToId)
+  if (!rule || rule.maxhours === null) return null
   const effective = getEffectiveBusinessHours(companyBusinessHours, clientOrgBusinessHoursById?.[ticket.clientorgid])
   return businessHoursElapsed(ticket.createdat, ticket.resolvedat, effective) <= rule.maxhours
 }
@@ -59,6 +85,7 @@ router.get('/agent-performance', authenticateToken, requireSuperadmin, async (re
 
     const businessHours = await getCompanyBusinessHours(companyId)
     const clientOrgBusinessHoursById = await getClientOrgBusinessHoursById(companyId)
+    const categoryNameToId = await getCategoryNameToId(companyId)
     const slaRulesResult = await pool.query('SELECT priority, categoryId, maxHours FROM SLARules WHERE companyId = $1', [companyId])
     const slaRules = slaRulesResult.rows
 
@@ -66,7 +93,7 @@ router.get('/agent-performance', authenticateToken, requireSuperadmin, async (re
     // in-window stats and the live open count both come from this one
     // set, computed in JS below rather than as separate SQL aggregates.
     const ticketsResult = await pool.query(
-      `SELECT t.id, t.assignedTo, t.status, t.priority, t.createdAt, t.resolvedAt, t.clientOrgId
+      `SELECT t.id, t.assignedTo, t.status, t.priority, t.category, t.createdAt, t.resolvedAt, t.clientOrgId
        FROM Tickets t
        JOIN Agents a ON a.name = t.assignedTo AND a.companyId = t.companyId
        WHERE t.companyId = $1`,
@@ -99,8 +126,8 @@ router.get('/agent-performance', authenticateToken, requireSuperadmin, async (re
         ? resolutionHours.reduce((sum, h) => sum + h, 0) / resolutionHours.length
         : null
 
-      const eligible = resolvedInWindow.filter(t => isSlaEligible(t, slaRules))
-      const breached = eligible.filter(t => isWithinSla(t, slaRules, businessHours, clientOrgBusinessHoursById) === false)
+      const eligible = resolvedInWindow.filter(t => isSlaEligible(t, slaRules, categoryNameToId))
+      const breached = eligible.filter(t => isWithinSla(t, slaRules, businessHours, clientOrgBusinessHoursById, categoryNameToId) === false)
 
       return {
         id: agent.id,
@@ -186,7 +213,7 @@ router.get('/ticket-trends', authenticateToken, requireSuperadmin, async (req, r
     // within-SLA classification per ticket happens in JS, since that
     // needs the business-hours-aware algorithm SQL can't run.
     const resolvedRawResult = await pool.query(
-      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.priority, t.createdAt, t.resolvedAt, t.clientOrgId
+      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.priority, t.category, t.createdAt, t.resolvedAt, t.clientOrgId
        FROM Tickets t
        WHERE t.companyId = $2 AND t.status = 'Resolved' AND t.resolvedAt >= $3`,
       [bucket, companyId, start]
@@ -194,6 +221,7 @@ router.get('/ticket-trends', authenticateToken, requireSuperadmin, async (req, r
 
     const businessHours = await getCompanyBusinessHours(companyId)
     const clientOrgBusinessHoursById = await getClientOrgBusinessHoursById(companyId)
+    const categoryNameToId = await getCategoryNameToId(companyId)
     const slaRulesResult = await pool.query('SELECT priority, categoryId, maxHours FROM SLARules WHERE companyId = $1', [companyId])
     const slaRules = slaRulesResult.rows
 
@@ -202,9 +230,9 @@ router.get('/ticket-trends', authenticateToken, requireSuperadmin, async (req, r
       const key = new Date(row.bucket).toISOString()
       if (!byBucket[key]) byBucket[key] = { bucket: row.bucket, resolvedcnt: 0, eligiblecnt: 0, withinslacnt: 0 }
       byBucket[key].resolvedcnt++
-      if (isSlaEligible(row, slaRules)) {
+      if (isSlaEligible(row, slaRules, categoryNameToId)) {
         byBucket[key].eligiblecnt++
-        if (isWithinSla(row, slaRules, businessHours, clientOrgBusinessHoursById)) byBucket[key].withinslacnt++
+        if (isWithinSla(row, slaRules, businessHours, clientOrgBusinessHoursById, categoryNameToId)) byBucket[key].withinslacnt++
       }
     }
 
