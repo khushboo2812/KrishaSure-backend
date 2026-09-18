@@ -1,0 +1,11 @@
+-- Run by hand in the Supabase SQL editor (this repo has no migration
+-- runner — schema is managed directly in Supabase).
+--
+-- Backs category-scoped "no SLA limit" rules (routes/reports.js,
+-- routes/sla.js): a rule can now be saved with maxHours left blank,
+-- meaning tickets matching its category+priority are permanently
+-- exempt from SLA breach tracking rather than just not-yet-breached.
+-- DROP CONSTRAINT/COLUMN-level NOT NULL is a no-op if the column is
+-- already nullable, so this is safe to run regardless of the column's
+-- current state.
+ALTER TABLE SLARules ALTER COLUMN maxHours DROP NOT NULL;
