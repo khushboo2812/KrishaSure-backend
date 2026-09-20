@@ -88,6 +88,18 @@ function validateAttachments(attachments) {
   return { parts }
 }
 
+// Token counts are what Gemini actually bills on, and the SDK hands
+// them back on every response (usageMetadata) whether or not anything
+// downstream asks for them — logging them here is the cheapest way to
+// get a real per-call cost figure without waiting on Cloud Billing's
+// own reporting lag (which can run hours behind). grep the server logs
+// for "[ai-usage]" over a test window and total the token counts, or
+// cross-check against Cloud Billing for the same window.
+function logUsage(route, usageMetadata) {
+  if (!usageMetadata) return
+  console.log(`[ai-usage] route=${route} promptTokens=${usageMetadata.promptTokenCount} outputTokens=${usageMetadata.candidatesTokenCount} totalTokens=${usageMetadata.totalTokenCount} at=${new Date().toISOString()}`)
+}
+
 function respondWithAiError(res, err) {
   if (isRetryableOverload(err)) {
     return res.status(503).json({ error: "The AI service is temporarily overloaded — please try again in a moment." })
@@ -157,6 +169,7 @@ router.post('/suggest', authenticateToken, async (req, res) => {
     const text = await generateWithRetry(async () => {
       const result = await model.generateContent(parts)
       const response = await result.response
+      logUsage('suggest', response.usageMetadata)
       return response.text()
     })
     res.json({ suggestion: text })
@@ -200,6 +213,7 @@ router.post('/chat', authenticateToken, async (req, res) => {
       const chat = model.startChat({ history })
       const result = await chat.sendMessage([{ text: message }, ...attachmentParts])
       const response = await result.response
+      logUsage('chat', response.usageMetadata)
       return response.text()
     })
     res.json({ reply: text })
