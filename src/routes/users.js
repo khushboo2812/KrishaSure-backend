@@ -7,6 +7,7 @@ const { authenticateToken } = require('../middleware/auth')
 const { getTicketReplyFromAddress } = require('../utils/supportEmail')
 const { generateVerificationToken } = require('../utils/verificationToken')
 const { isValidEmail } = require('../utils/validateEmail')
+const { checkUserLimit } = require('../utils/usageLimits')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -154,6 +155,11 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Enter a valid email address' })
     }
 
+    const userLimitCheck = await checkUserLimit(companyId)
+    if (!userLimitCheck.allowed) {
+      return res.status(userLimitCheck.status).json({ error: userLimitCheck.message })
+    }
+
     // If this email already belongs to a real person, don't silently
     // create a duplicate identity and don't silently link them either —
     // hand the admin that person's existing memberships and let them
@@ -228,6 +234,11 @@ router.post('/link-membership', authenticateToken, async (req, res) => {
     // other path to creating a membership with an arbitrary role.
     if (callerRole !== 'superadmin' && callerRole !== 'platform_owner') {
       return res.status(403).json({ error: 'Access denied' })
+    }
+
+    const userLimitCheck = await checkUserLimit(companyId)
+    if (!userLimitCheck.allowed) {
+      return res.status(userLimitCheck.status).json({ error: userLimitCheck.message })
     }
 
     const personResult = await pool.query('SELECT * FROM People WHERE id = $1', [personId])

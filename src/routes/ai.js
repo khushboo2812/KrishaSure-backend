@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 const { GoogleGenerativeAI } = require('@google/generative-ai')
 const { authenticateToken } = require('../middleware/auth')
+const { checkAiAccess, logAiUsage } = require('../utils/usageLimits')
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
 
@@ -157,6 +158,11 @@ async function generateWithRetry(fn) {
 // available. Please update your code to use models/gemini-3.6-flash").
 // Swapped to the model name Google's own error told us to use.
 router.post('/suggest', authenticateToken, async (req, res) => {
+  const accessCheck = await checkAiAccess(req.user.companyId)
+  if (!accessCheck.allowed) {
+    return res.status(accessCheck.status).json({ error: accessCheck.message })
+  }
+
   const { title, description, attachments } = req.body
   const { parts: attachmentParts, error: attachmentError } = validateAttachments(attachments)
   if (attachmentError) {
@@ -172,6 +178,7 @@ router.post('/suggest', authenticateToken, async (req, res) => {
       logUsage('suggest', response.usageMetadata)
       return response.text()
     })
+    await logAiUsage(req.user.companyId, 'suggest')
     res.json({ suggestion: text })
   } catch (err) {
     respondWithAiError(res, err)
@@ -192,6 +199,11 @@ router.post('/suggest', authenticateToken, async (req, res) => {
 // from a ticket's title/description, this one continues an already-
 // open one.
 router.post('/chat', authenticateToken, async (req, res) => {
+  const accessCheck = await checkAiAccess(req.user.companyId)
+  if (!accessCheck.allowed) {
+    return res.status(accessCheck.status).json({ error: accessCheck.message })
+  }
+
   const { history, message, attachments } = req.body
   if (!Array.isArray(history) || !message) {
     return res.status(400).json({ error: 'history and message are required' })
@@ -216,6 +228,7 @@ router.post('/chat', authenticateToken, async (req, res) => {
       logUsage('chat', response.usageMetadata)
       return response.text()
     })
+    await logAiUsage(req.user.companyId, 'chat')
     res.json({ reply: text })
   } catch (err) {
     respondWithAiError(res, err)
