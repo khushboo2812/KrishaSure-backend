@@ -73,3 +73,6 @@ const platformReportRoutes = require('./routes/platformReports')
 app.use('/api/platform/reports', platformReportRoutes)
 const businessHoursRoutes = require('./routes/businessHours')
 app.use('/api/business-hours', businessHoursRoutes)
+
+const platformSettingsRoutes = require('./routes/platformSettings')
+app.use('/api/platform-settings', platformSettingsRoutes)
