@@ -290,6 +290,35 @@ router.put('/:id/active', authenticateToken, requirePlatformOwner, async (req, r
   }
 })
 
+// PUT a company's plan limits — maxUsers, aiEnabled,
+// maxAiRequestsPerMonth (see sql/add_usage_limits.sql). None of this is
+// actually checked anywhere unless PlatformSettings.enforceUsageLimits
+// is also true (src/utils/usageLimits.js), so setting a company's
+// limits ahead of turning that on is safe. maxUsers/
+// maxAiRequestsPerMonth of null (or omitted) means unlimited for that
+// one field — they're independent of each other and of aiEnabled, so
+// e.g. a company can have unlimited users with AI turned off.
+router.put('/:id/plan-limits', authenticateToken, requirePlatformOwner, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { maxUsers, aiEnabled, maxAiRequestsPerMonth } = req.body
+
+    const result = await pool.query(
+      `UPDATE Companies SET maxUsers = $1, aiEnabled = $2, maxAiRequestsPerMonth = $3
+       WHERE id = $4 RETURNING id, name, maxUsers, aiEnabled, maxAiRequestsPerMonth`,
+      [maxUsers === '' || maxUsers == null ? null : maxUsers, aiEnabled !== false, maxAiRequestsPerMonth === '' || maxAiRequestsPerMonth == null ? null : maxAiRequestsPerMonth, id]
+    )
+    const company = result.rows[0]
+    if (!company) {
+      return res.status(404).json({ error: 'Company not found' })
+    }
+
+    res.json({ message: `Plan limits updated for ${company.name}!!`, company })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // Backfills a supportEmail for a company that predates this feature
 // (POST / only generates one at creation time). Refuses to touch a
 // company that already has one — regenerating would silently break an
