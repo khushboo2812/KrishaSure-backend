@@ -8,6 +8,7 @@ const { getTicketReplyFromAddress } = require('../utils/supportEmail')
 const { generateVerificationToken } = require('../utils/verificationToken')
 const { isValidEmail } = require('../utils/validateEmail')
 const { checkUserLimit } = require('../utils/usageLimits')
+const { checkAndTrackOverLimit } = require('../utils/overLimitTracking')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -724,6 +725,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     }
 
     await pool.query('DELETE FROM Memberships WHERE id = $1 AND companyId = $2', [id, companyId])
+    await checkAndTrackOverLimit(companyId)
     res.json({ message: 'User removed from this company successfully!!' })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -778,6 +780,7 @@ router.put('/:id/active', authenticateToken, async (req, res) => {
     }
 
     await pool.query('UPDATE Memberships SET isActive = $1 WHERE id = $2 AND companyId = $3', [isActive, id, companyId])
+    await checkAndTrackOverLimit(companyId)
 
     res.json({ message: `${membership.name} ${isActive ? 'reactivated' : 'deactivated'} successfully!!` })
   } catch (err) {

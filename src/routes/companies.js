@@ -7,6 +7,7 @@ const { authenticateToken, requirePlatformOwner } = require('../middleware/auth'
 const { generateVerificationToken } = require('../utils/verificationToken')
 const { generateSupportEmail } = require('../utils/supportEmail')
 const { isValidEmail } = require('../utils/validateEmail')
+const { checkAndTrackOverLimit } = require('../utils/overLimitTracking')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -315,6 +316,15 @@ router.put('/:id/plan-limits', authenticateToken, requirePlatformOwner, async (r
     if (!company) {
       return res.status(404).json({ error: 'Company not found' })
     }
+
+    // Lowering maxUsers (or turning enforcement on for a company
+    // already over whatever cap it has) can push it over its own
+    // limit right here — this is the only place that can happen, since
+    // adding a new user is already blocked once a company is at/over
+    // its cap while enforcement is on. Detects that and starts the
+    // grace-period clock; also clears it if this change brings a
+    // previously over-limit company back within its cap.
+    await checkAndTrackOverLimit(id)
 
     res.json({ message: `Plan limits updated for ${company.name}!!`, company })
   } catch (err) {
