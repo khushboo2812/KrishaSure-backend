@@ -119,19 +119,27 @@ async function checkUserLimit(companyId) {
   return { allowed: true }
 }
 
-// Checked at the top of both AI routes. aiEnabled gates AI off
-// entirely (the No-AI tier); maxAiRequestsPerMonth caps how many
-// calls a company can make in the current calendar month, counted
-// against AiUsageLog — which logAiUsage below writes to
-// unconditionally, so the count is already accurate the moment
-// enforcement gets switched on, not just from that point forward.
+// Checked at the top of both AI routes, and by GET /api/ai/status for
+// the frontend to decide whether to show the "Get AI Suggestion"
+// button at all. Deliberately has no side effects (doesn't notify,
+// doesn't log usage) — it's a pure question, "can this company use AI
+// right now" — so calling it from a passive status check never fires
+// a false "someone tried to use AI" email. Callers that represent a
+// real attempt (the AI routes below) notify themselves using the
+// returned reason/details when blocked.
+//
+// aiEnabled gates AI off entirely (the No-AI tier);
+// maxAiRequestsPerMonth caps how many calls a company can make in the
+// current calendar month, counted against AiUsageLog — which
+// logAiUsage below writes to unconditionally, so the count is already
+// accurate the moment enforcement gets switched on, not just from
+// that point forward.
 async function checkAiAccess(companyId) {
   const companyResult = await pool.query('SELECT enforceUsageLimits, aiEnabled, maxAiRequestsPerMonth FROM Companies WHERE id = $1', [companyId])
   const company = companyResult.rows[0]
   if (!company || !company.enforceusagelimits) return { allowed: true }
   if (!company.aienabled) {
-    notifyLimitCrossed(companyId, 'ai_disabled', {})
-    return { allowed: false, status: 403, message: 'AI features are not included in your current plan — contact your platform administrator to upgrade.' }
+    return { allowed: false, status: 403, message: 'AI features are not included in your current plan — contact your platform administrator to upgrade.', reason: 'ai_disabled', details: {} }
   }
   if (company.maxairequestspermonth == null) return { allowed: true }
 
@@ -140,8 +148,7 @@ async function checkAiAccess(companyId) {
     [companyId]
   )
   if (parseInt(countResult.rows[0].count, 10) >= company.maxairequestspermonth) {
-    notifyLimitCrossed(companyId, 'ai_request_limit', { maxAiRequestsPerMonth: company.maxairequestspermonth })
-    return { allowed: false, status: 429, message: `Your plan's AI usage limit (${company.maxairequestspermonth} requests/month) has been reached — it resets at the start of next month, or contact your platform administrator to upgrade.` }
+    return { allowed: false, status: 429, message: `Your plan's AI usage limit (${company.maxairequestspermonth} requests/month) has been reached — it resets at the start of next month, or contact your platform administrator to upgrade.`, reason: 'ai_request_limit', details: { maxAiRequestsPerMonth: company.maxairequestspermonth } }
   }
   return { allowed: true }
 }
@@ -154,4 +161,4 @@ async function logAiUsage(companyId, route) {
   await pool.query('INSERT INTO AiUsageLog (companyId, route) VALUES ($1, $2)', [companyId, route])
 }
 
-module.exports = { checkUserLimit, checkAiAccess, logAiUsage }
+module.exports = { checkUserLimit, checkAiAccess, logAiUsage, notifyLimitCrossed }
