@@ -5,6 +5,7 @@ const { sendEmail } = require('../config/email')
 const { authenticateToken, requireNotClient } = require('../middleware/auth')
 const { generateTicketId } = require('../utils/ticketId')
 const { getTicketReplyFromAddress } = require('../utils/supportEmail')
+const { PRIORITIES } = require('../utils/classifyTicket')
 
 // Tickets only stores clientEmail (a ticket can come in from someone
 // with no People row at all, historically, or a typo'd address), so
@@ -218,6 +219,50 @@ router.put('/:id', authenticateToken, requireNotClient, async (req, res) => {
     }
 
     res.json({ message: 'Ticket updated successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Separate from PUT /:id on purpose: that route overwrites status,
+// assignedTo and resolvedAt together from whatever the body carries, so
+// adding category/priority there would force every existing caller to
+// send them too or have them nulled. Marks the result 'manual' so the
+// "set by AI" hint disappears once a person has confirmed or fixed it.
+router.put('/:id/classification', authenticateToken, requireNotClient, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId, name } = req.user
+    const { category, priority } = req.body
+
+    if (!PRIORITIES.includes(priority)) {
+      return res.status(400).json({ error: `Priority must be one of: ${PRIORITIES.join(', ')}` })
+    }
+
+    const categoryResult = await pool.query('SELECT 1 FROM Categories WHERE companyId = $1 AND name = $2', [companyId, category])
+    if (categoryResult.rows.length === 0) {
+      return res.status(400).json({ error: 'That category no longer exists — refresh and pick another.' })
+    }
+
+    const ticketResult = await pool.query('SELECT category, priority FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
+    const ticket = ticketResult.rows[0]
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' })
+    }
+
+    await pool.query(
+      "UPDATE Tickets SET category = $1, priority = $2, categorySource = 'manual' WHERE id = $3 AND companyId = $4",
+      [category, priority, id, companyId]
+    )
+
+    if (ticket.category !== category || ticket.priority !== priority) {
+      await pool.query(
+        'INSERT INTO TicketHistory (ticketId, action, performedBy) VALUES ($1, $2, $3)',
+        [id, 'Recategorized', name]
+      )
+    }
+
+    res.json({ message: 'Category and priority updated!!' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
