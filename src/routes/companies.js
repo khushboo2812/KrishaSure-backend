@@ -291,22 +291,25 @@ router.put('/:id/active', authenticateToken, requirePlatformOwner, async (req, r
 })
 
 // PUT a company's plan limits — maxUsers, aiEnabled,
-// maxAiRequestsPerMonth (see sql/add_usage_limits.sql). None of this is
-// actually checked anywhere unless PlatformSettings.enforceUsageLimits
-// is also true (src/utils/usageLimits.js), so setting a company's
-// limits ahead of turning that on is safe. maxUsers/
+// maxAiRequestsPerMonth, and enforceUsageLimits (see
+// sql/add_usage_limits.sql, sql/add_company_enforce_usage_limits.sql).
+// enforceUsageLimits is per company, not a platform-wide switch — it's
+// what actually turns any of this from inert into blocking, one
+// company at a time, so a rollout to one pilot client doesn't affect
+// anyone else (src/utils/usageLimits.js). maxUsers/
 // maxAiRequestsPerMonth of null (or omitted) means unlimited for that
-// one field — they're independent of each other and of aiEnabled, so
-// e.g. a company can have unlimited users with AI turned off.
+// one field — all four fields are independent of each other, so e.g.
+// a company can have unlimited users with AI turned off, or limits
+// set but enforcement still off.
 router.put('/:id/plan-limits', authenticateToken, requirePlatformOwner, async (req, res) => {
   try {
     const { id } = req.params
-    const { maxUsers, aiEnabled, maxAiRequestsPerMonth } = req.body
+    const { maxUsers, aiEnabled, maxAiRequestsPerMonth, enforceUsageLimits } = req.body
 
     const result = await pool.query(
-      `UPDATE Companies SET maxUsers = $1, aiEnabled = $2, maxAiRequestsPerMonth = $3
-       WHERE id = $4 RETURNING id, name, maxUsers, aiEnabled, maxAiRequestsPerMonth`,
-      [maxUsers === '' || maxUsers == null ? null : maxUsers, aiEnabled !== false, maxAiRequestsPerMonth === '' || maxAiRequestsPerMonth == null ? null : maxAiRequestsPerMonth, id]
+      `UPDATE Companies SET maxUsers = $1, aiEnabled = $2, maxAiRequestsPerMonth = $3, enforceUsageLimits = $4
+       WHERE id = $5 RETURNING id, name, maxUsers, aiEnabled, maxAiRequestsPerMonth, enforceUsageLimits`,
+      [maxUsers === '' || maxUsers == null ? null : maxUsers, aiEnabled !== false, maxAiRequestsPerMonth === '' || maxAiRequestsPerMonth == null ? null : maxAiRequestsPerMonth, !!enforceUsageLimits, id]
     )
     const company = result.rows[0]
     if (!company) {
