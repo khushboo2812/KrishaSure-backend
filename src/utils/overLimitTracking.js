@@ -78,10 +78,21 @@ function notifyOverLimitWarning(companyId, companyName, activeCount, maxUsers) {
 // Deactivate/Reactivate button already uses, so undoing this later is
 // just the admin clicking Reactivate on whoever they bring back, no
 // separate "locked out by the system" state to unwind.
+//
+// Deliberately doesn't filter out companies already marked
+// overLimitLockedOut — a company can drift back over its limit after
+// being locked out (e.g. a since-fixed bug once let a deactivated user
+// get reactivated straight past the seat check), and with the filter
+// this job would silently skip it forever, since overLimitLockedOut
+// only gets cleared once the company is back within its limit. Instead
+// it always recomputes and re-deactivates anyone over the kept
+// superadmin, and only sends a fresh lockout email when that actually
+// changes something — a normal re-run with nothing left to deactivate
+// is a no-op, not a repeat email.
 async function enforceExpiredGracePeriods() {
   const overdue = await pool.query(
     `SELECT id, name, maxUsers, overLimitSince FROM Companies
-     WHERE overLimitSince IS NOT NULL AND overLimitLockedOut = false AND enforceUsageLimits = true`
+     WHERE overLimitSince IS NOT NULL AND enforceUsageLimits = true`
   )
 
   for (const company of overdue.rows) {
@@ -102,13 +113,15 @@ async function enforceExpiredGracePeriods() {
     // problem than its seat count.
     if (!keep) continue
 
-    await pool.query(
-      'UPDATE Memberships SET isActive = false WHERE companyId = $1 AND isActive = true AND id != $2',
+    const deactivated = await pool.query(
+      'UPDATE Memberships SET isActive = false WHERE companyId = $1 AND isActive = true AND id != $2 RETURNING id',
       [company.id, keep.id]
     )
     await pool.query('UPDATE Companies SET overLimitLockedOut = true WHERE id = $1', [company.id])
 
-    notifyLockout(company.id, keep, company.name, company.maxusers)
+    if (deactivated.rowCount > 0) {
+      notifyLockout(company.id, keep, company.name, company.maxusers)
+    }
   }
 }
 
