@@ -22,8 +22,8 @@ const MAX_BODY_CHARS = 4000
 //     has no categories to pick from; nothing was expected to run
 //   { outcome: 'failed' } — AI should have run but didn't: monthly cap
 //     reached, timeout, API error, or an answer outside the allowed values
-// The caller files both non-'ai' outcomes under the default category but
-// only flags 'failed' for review. Never notifies anyone when blocked:
+// The caller files both non-'ai' outcomes under the default category,
+// flagged for review. Never notifies anyone when blocked:
 // unlike someone clicking an AI button, nobody attempted anything here,
 // and a No-AI-tier company would otherwise get a "tried to use AI" email
 // for every inbound message.
