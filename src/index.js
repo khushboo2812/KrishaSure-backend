@@ -73,3 +73,15 @@ const platformReportRoutes = require('./routes/platformReports')
 app.use('/api/platform/reports', platformReportRoutes)
 const businessHoursRoutes = require('./routes/businessHours')
 app.use('/api/business-hours', businessHoursRoutes)
+
+// Checks every company sitting over its user limit and locks out the
+// extras once their 30-working-day grace period has expired (see
+// utils/overLimitTracking.js). No job scheduler in this app — a plain
+// interval on the running server is enough, since it's a persistent
+// process, not serverless. Runs shortly after boot too, so a company
+// whose grace period expired while the server was down/redeploying
+// doesn't have to wait up to 24h for the next tick.
+const { enforceExpiredGracePeriods } = require('./utils/overLimitTracking')
+const GRACE_PERIOD_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
+setTimeout(() => enforceExpiredGracePeriods().catch(err => console.error('Grace-period check failed:', err.message)), 60 * 1000)
+setInterval(() => enforceExpiredGracePeriods().catch(err => console.error('Grace-period check failed:', err.message)), GRACE_PERIOD_CHECK_INTERVAL_MS)

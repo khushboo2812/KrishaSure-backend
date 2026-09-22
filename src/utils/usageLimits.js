@@ -161,4 +161,4 @@ async function logAiUsage(companyId, route) {
   await pool.query('INSERT INTO AiUsageLog (companyId, route) VALUES ($1, $2)', [companyId, route])
 }
 
-module.exports = { checkUserLimit, checkAiAccess, logAiUsage, notifyLimitCrossed }
+module.exports = { checkUserLimit, checkAiAccess, logAiUsage, notifyLimitCrossed, getNotificationRecipients }
