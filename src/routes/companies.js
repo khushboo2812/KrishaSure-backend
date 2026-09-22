@@ -7,7 +7,7 @@ const { authenticateToken, requirePlatformOwner } = require('../middleware/auth'
 const { generateVerificationToken } = require('../utils/verificationToken')
 const { generateSupportEmail } = require('../utils/supportEmail')
 const { isValidEmail } = require('../utils/validateEmail')
-const { checkAndTrackOverLimit } = require('../utils/overLimitTracking')
+const { checkAndTrackOverLimit, enforceExpiredGracePeriods } = require('../utils/overLimitTracking')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -417,6 +417,24 @@ router.delete('/:id', authenticateToken, requirePlatformOwner, async (req, res) 
     await pool.query('DELETE FROM Companies WHERE id = $1', [id])
 
     res.json({ message: `${company.name} deleted successfully!!` })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST run the over-limit grace-period check right now, instead of
+// waiting for the next scheduled tick (see index.js — it runs once an
+// hour after boot and every 24h after that). Real production use: you
+// just fixed the "no active superadmin" edge case for a company and
+// want it re-evaluated immediately rather than waiting for the next
+// tick. Also the testing hook — backdate a company's overLimitSince
+// far enough back by hand in SQL, then call this, to see the real
+// enforcement logic run end to end without changing the actual
+// 30-working-day threshold anywhere.
+router.post('/run-grace-period-check', authenticateToken, requirePlatformOwner, async (req, res) => {
+  try {
+    await enforceExpiredGracePeriods()
+    res.json({ message: 'Grace-period check ran successfully!!' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
