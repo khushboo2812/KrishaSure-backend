@@ -6,6 +6,7 @@ const { sendEmail } = require('../config/email')
 const { supabase } = require('../config/storage')
 const { INACTIVE_COMPANY_MESSAGE } = require('../middleware/auth')
 const { generateTicketId } = require('../utils/ticketId')
+const { classifyTicket } = require('../utils/classifyTicket')
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
@@ -292,14 +293,23 @@ router.post('/', async (req, res) => {
       return res.status(200).json({ handled: 'company_inactive' })
     }
 
-    const categoriesResult = await pool.query("SELECT * FROM Categories WHERE companyId = $1 AND name = 'General' LIMIT 1", [companyId])
-let defaultCategory = categoriesResult.rows[0]?.name
+    // AI picks the category/priority from the email's content when it
+    // can; otherwise General (or the company's first category) / Medium,
+    // flagged as 'default' so agents know it still needs sorting.
+    // Classified before auto-assignment on purpose — assignment matches
+    // agents by skill on this category, which a blanket default made
+    // meaningless for every email ticket.
+    const categoriesResult = await pool.query('SELECT name, description FROM Categories WHERE companyId = $1 ORDER BY id', [companyId])
+    const companyCategories = categoriesResult.rows
+    const fallbackCategory = companyCategories.find(c => c.name === 'General')?.name || companyCategories[0]?.name || 'General'
 
-if (!defaultCategory) {
-  const fallbackResult = await pool.query('SELECT * FROM Categories WHERE companyId = $1 ORDER BY id LIMIT 1', [companyId])
-  defaultCategory = fallbackResult.rows[0]?.name || 'General'
-}
-    const defaultPriority = 'Medium'
+    const classification = await classifyTicket({ companyId, subject, body, categories: companyCategories })
+    const ticketCategory = classification?.category || fallbackCategory
+    const ticketPriority = classification?.priority || 'Medium'
+    const categorySource = classification ? 'ai' : 'default'
+    const classificationNote = classification
+      ? 'auto-detected from the email — adjust it in KrishaSure if it looks wrong'
+      : 'default — not auto-detected, please review'
 
     // Auto-assignment must never pick a deactivated agent — unlike
     // agents.js's own GET /, there's no frontend here to filter this
@@ -312,17 +322,17 @@ if (!defaultCategory) {
       [companyId]
     )
     const ticketsResult = await pool.query('SELECT * FROM Tickets WHERE companyId = $1', [companyId])
-    const assignedTo = autoAssignAgent(agentsResult.rows, ticketsResult.rows, defaultCategory, defaultPriority)
+    const assignedTo = autoAssignAgent(agentsResult.rows, ticketsResult.rows, ticketCategory, ticketPriority)
 
     const ticketId = await generateTicketId(pool)
     const initialStatus = assignedTo ? 'Open/Assigned' : 'Open/Unassigned'
 
     const ticketInsertResult = await pool.query(
-      `INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId, status, source, sourceEmailId)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `INSERT INTO Tickets (ticketId, title, description, category, priority, assignedTo, clientEmail, companyId, clientOrgId, status, source, sourceEmailId, categorySource)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT (sourceEmailId) DO NOTHING
        RETURNING id`,
-      [ticketId, subject || 'No subject', body, defaultCategory, defaultPriority, assignedTo, senderEmail, companyId, clientOrgId, initialStatus, 'email', email_id]
+      [ticketId, subject || 'No subject', body, ticketCategory, ticketPriority, assignedTo, senderEmail, companyId, clientOrgId, initialStatus, 'email', email_id, categorySource]
     )
 
     if (ticketInsertResult.rows.length === 0) {
@@ -366,7 +376,7 @@ if (!defaultCategory) {
                 <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticketId}</td></tr>
                 <tr><td style="padding: 8px; background: #f4f7fb;"><strong>From</strong></td><td style="padding: 8px;">${senderEmail}</td></tr>
                 <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Subject</strong></td><td style="padding: 8px;">${subject}</td></tr>
-                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Category / Priority</strong></td><td style="padding: 8px;">${defaultCategory} / ${defaultPriority} (default, not confirmed by client)</td></tr>
+                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Category / Priority</strong></td><td style="padding: 8px;">${ticketCategory} / ${ticketPriority} (${classificationNote})</td></tr>
               </table>
               <p>Log in to KrishaSure to review the full message, adjust the category or priority, or reassign it to a different agent if it's not the right fit for you.</p>
               <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
@@ -387,8 +397,8 @@ if (!defaultCategory) {
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h1 style="color: #0A2540;">Ticket Created Successfully!!</h1>
           <p>We've created ticket <strong>${ticketId}</strong> from your email.</p>
-          <p>Category: ${defaultCategory} · Priority: ${defaultPriority}</p>
-          <p>You can log in to KrishaSure to track progress, add details, or adjust the category and priority.</p>
+          <p>Category: ${ticketCategory} · Priority: ${ticketPriority}</p>
+          <p>You can log in to KrishaSure to track progress or add details. Our support team will adjust the category or priority if needed.</p>
           <br/>
           <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
         </div>
