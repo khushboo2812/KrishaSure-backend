@@ -44,19 +44,35 @@ async function getCategoryNameToId(companyId) {
   return byName
 }
 
-// A rule scoped to this ticket's own category takes precedence over
-// the company-wide one for the same priority — lets a specific
-// category (e.g. one that isn't really "support" at all, like an
-// internal sales-pipeline category) opt out of the default SLA
-// entirely, without touching what every other category still gets.
-// A found category rule with maxHours NULL means "no SLA limit for
-// this category/priority" — deliberately, not the same as "no rule
-// configured" (which still falls through to the company-wide one).
+// Four-tier waterfall, most specific wins, for the same priority:
+// 1. this client org + this category
+// 2. this client org, any category
+// 3. this category, any client org (the original category override)
+// 4. company-wide default (neither set)
+// An MSP manages several client orgs that can each have their own
+// contracted SLA times — without the client-org tiers, every client
+// org under one company was forced to share identical SLA rules, the
+// same problem category-scoping solved for categories. A found rule
+// with maxHours NULL means "no SLA limit" for whatever it matched —
+// deliberately, not the same as "no rule configured" (which still
+// falls through to a less specific tier).
 function resolveSlaRule(ticket, slaRules, categoryNameToId) {
   const categoryId = categoryNameToId?.[ticket.category]
-  const categoryRule = categoryId !== undefined && slaRules.find(r => r.priority === ticket.priority && r.categoryid === categoryId)
-  if (categoryRule) return categoryRule
-  return slaRules.find(r => r.priority === ticket.priority && r.categoryid === null) || null
+  const clientOrgId = ticket.clientorgid
+
+  if (clientOrgId != null && categoryId !== undefined) {
+    const rule = slaRules.find(r => r.priority === ticket.priority && r.clientorgid === clientOrgId && r.categoryid === categoryId)
+    if (rule) return rule
+  }
+  if (clientOrgId != null) {
+    const rule = slaRules.find(r => r.priority === ticket.priority && r.clientorgid === clientOrgId && r.categoryid === null)
+    if (rule) return rule
+  }
+  if (categoryId !== undefined) {
+    const rule = slaRules.find(r => r.priority === ticket.priority && r.clientorgid == null && r.categoryid === categoryId)
+    if (rule) return rule
+  }
+  return slaRules.find(r => r.priority === ticket.priority && r.categoryid === null && r.clientorgid == null) || null
 }
 
 // A reopened ticket's current round is measured from when it was
@@ -98,7 +114,7 @@ router.get('/agent-performance', authenticateToken, requireSuperadmin, async (re
     const businessHours = await getCompanyBusinessHours(companyId)
     const clientOrgBusinessHoursById = await getClientOrgBusinessHoursById(companyId)
     const categoryNameToId = await getCategoryNameToId(companyId)
-    const slaRulesResult = await pool.query('SELECT priority, categoryId, maxHours FROM SLARules WHERE companyId = $1', [companyId])
+    const slaRulesResult = await pool.query('SELECT priority, categoryId, clientOrgId, maxHours FROM SLARules WHERE companyId = $1', [companyId])
     const slaRules = slaRulesResult.rows
 
     // Every ticket assigned to any of this company's agents — resolved-
@@ -234,7 +250,7 @@ router.get('/ticket-trends', authenticateToken, requireSuperadmin, async (req, r
     const businessHours = await getCompanyBusinessHours(companyId)
     const clientOrgBusinessHoursById = await getClientOrgBusinessHoursById(companyId)
     const categoryNameToId = await getCategoryNameToId(companyId)
-    const slaRulesResult = await pool.query('SELECT priority, categoryId, maxHours FROM SLARules WHERE companyId = $1', [companyId])
+    const slaRulesResult = await pool.query('SELECT priority, categoryId, clientOrgId, maxHours FROM SLARules WHERE companyId = $1', [companyId])
     const slaRules = slaRulesResult.rows
 
     const byBucket = {}

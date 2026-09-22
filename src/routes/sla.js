@@ -7,9 +7,10 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
     const result = await pool.query(
-      `SELECT s.*, c.name as categoryName 
+      `SELECT s.*, c.name as categoryName, o.name as clientOrgName
        FROM SLARules s
        LEFT JOIN Categories c ON s.categoryId = c.id
+       LEFT JOIN ClientOrganizations o ON s.clientOrgId = o.id
        WHERE s.companyId = $1
        ORDER BY s.priority`,
       [companyId]
@@ -23,10 +24,10 @@ router.get('/', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, requireSuperadmin, async (req, res) => {
   try {
     const { companyId } = req.user
-    const { priority, categoryId, maxHours } = req.body
+    const { priority, categoryId, clientOrgId, maxHours } = req.body
     await pool.query(
-      'INSERT INTO SLARules (priority, categoryId, maxHours, companyId) VALUES ($1, $2, $3, $4)',
-      [priority, categoryId || null, maxHours, companyId]
+      'INSERT INTO SLARules (priority, categoryId, clientOrgId, maxHours, companyId) VALUES ($1, $2, $3, $4, $5)',
+      [priority, categoryId || null, clientOrgId || null, maxHours, companyId]
     )
     res.status(201).json({ message: 'SLA rule created successfully!!' })
   } catch (err) {
@@ -38,10 +39,10 @@ router.put('/:id', authenticateToken, requireSuperadmin, async (req, res) => {
   try {
     const { id } = req.params
     const { companyId } = req.user
-    const { priority, categoryId, maxHours } = req.body
+    const { priority, categoryId, clientOrgId, maxHours } = req.body
     await pool.query(
-      'UPDATE SLARules SET priority = $1, categoryId = $2, maxHours = $3 WHERE id = $4 AND companyId = $5',
-      [priority, categoryId || null, maxHours, id, companyId]
+      'UPDATE SLARules SET priority = $1, categoryId = $2, clientOrgId = $3, maxHours = $4 WHERE id = $5 AND companyId = $6',
+      [priority, categoryId || null, clientOrgId || null, maxHours, id, companyId]
     )
     res.json({ message: 'SLA rule updated successfully!!' })
   } catch (err) {
