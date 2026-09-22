@@ -16,18 +16,24 @@ const CLASSIFY_TIMEOUT_MS = 8000
 const MAX_BODY_CHARS = 4000
 
 // Picks a category (strictly one of this company's own) and a priority
-// for an inbound email. Returns { category, priority }, or null whenever
-// it can't — AI not on the plan, monthly AI cap reached, no categories,
-// timeout, API error, or an answer outside the allowed values — so the
-// caller always has a clean "fall back to the default" path. Never
-// notifies anyone when blocked: unlike someone clicking an AI button,
-// nobody attempted anything here, and a No-AI-tier company would
-// otherwise get a "tried to use AI" email for every inbound message.
+// for an inbound email. Returns one of:
+//   { outcome: 'ai', category, priority }
+//   { outcome: 'unavailable' } — AI isn't on this company's plan, or it
+//     has no categories to pick from; nothing was expected to run
+//   { outcome: 'failed' } — AI should have run but didn't: monthly cap
+//     reached, timeout, API error, or an answer outside the allowed values
+// The caller files both non-'ai' outcomes under the default category but
+// only flags 'failed' for review. Never notifies anyone when blocked:
+// unlike someone clicking an AI button, nobody attempted anything here,
+// and a No-AI-tier company would otherwise get a "tried to use AI" email
+// for every inbound message.
 async function classifyTicket({ companyId, subject, body, categories }) {
-  if (!categories || categories.length === 0) return null
+  if (!categories || categories.length === 0) return { outcome: 'unavailable' }
 
   const accessCheck = await checkAiAccess(companyId)
-  if (!accessCheck.allowed) return null
+  if (!accessCheck.allowed) {
+    return { outcome: accessCheck.reason === 'ai_disabled' ? 'unavailable' : 'failed' }
+  }
 
   const categoryNames = categories.map(c => c.name)
   const categoryList = categories
@@ -79,11 +85,11 @@ ${(body || '').slice(0, MAX_BODY_CHARS)}
     // The schema already restricts both fields, but a category deleted
     // or renamed between the query and the answer — or a model that
     // ignores the schema — must never land on a ticket unchecked.
-    if (!categoryNames.includes(parsed.category) || !PRIORITIES.includes(parsed.priority)) return null
-    return { category: parsed.category, priority: parsed.priority }
+    if (!categoryNames.includes(parsed.category) || !PRIORITIES.includes(parsed.priority)) return { outcome: 'failed' }
+    return { outcome: 'ai', category: parsed.category, priority: parsed.priority }
   } catch (err) {
     console.error('Email ticket classification failed, using default category:', err.message)
-    return null
+    return { outcome: 'failed' }
   }
 }
 
