@@ -4,9 +4,10 @@
 -- Where a ticket's current category/priority came from, so the UI can
 -- flag the ones worth double-checking:
 --   'ai'      — picked automatically from an inbound email's content
---   'default' — an inbound email the AI couldn't classify (AI not on
---               the company's plan, monthly AI cap reached, or the call
---               failed), so it fell back to General / Medium
+--   'default' — an inbound email on a plan WITH AI that the AI couldn't
+--               classify (monthly cap reached, timeout, error), filed
+--               under General / Medium and flagged for review
 --   'manual'  — an agent or superadmin changed it by hand
---   NULL      — set by whoever filed it in the app (existing tickets)
+--   NULL      — set by whoever filed it in the app, or an inbound email
+--               on a plan without AI (filed quietly under General / Medium)
 ALTER TABLE Tickets ADD COLUMN IF NOT EXISTS categorySource VARCHAR(20);

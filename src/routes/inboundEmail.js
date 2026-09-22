@@ -294,22 +294,26 @@ router.post('/', async (req, res) => {
     }
 
     // AI picks the category/priority from the email's content when it
-    // can; otherwise General (or the company's first category) / Medium,
-    // flagged as 'default' so agents know it still needs sorting.
-    // Classified before auto-assignment on purpose — assignment matches
-    // agents by skill on this category, which a blanket default made
-    // meaningless for every email ticket.
+    // can; otherwise it goes to General (or the company's first
+    // category) / Medium. That fallback is only flagged 'default'
+    // ("needs category") when AI should have run and didn't — on a
+    // plan without AI it's filed quietly, or every email ticket there
+    // would carry the flag. Classified before auto-assignment on
+    // purpose — assignment matches agents by skill on this category,
+    // which a blanket default made meaningless for every email ticket.
     const categoriesResult = await pool.query('SELECT name, description FROM Categories WHERE companyId = $1 ORDER BY id', [companyId])
     const companyCategories = categoriesResult.rows
     const fallbackCategory = companyCategories.find(c => c.name === 'General')?.name || companyCategories[0]?.name || 'General'
 
     const classification = await classifyTicket({ companyId, subject, body, categories: companyCategories })
-    const ticketCategory = classification?.category || fallbackCategory
-    const ticketPriority = classification?.priority || 'Medium'
-    const categorySource = classification ? 'ai' : 'default'
-    const classificationNote = classification
-      ? 'auto-detected from the email — adjust it in KrishaSure if it looks wrong'
-      : 'default — not auto-detected, please review'
+    const aiPicked = classification.outcome === 'ai'
+    const aiFailed = classification.outcome === 'failed'
+    const ticketCategory = aiPicked ? classification.category : fallbackCategory
+    const ticketPriority = aiPicked ? classification.priority : 'Medium'
+    const categorySource = aiPicked ? 'ai' : aiFailed ? 'default' : null
+    const classificationNote = aiPicked
+      ? ' (auto-detected from the email — adjust it in KrishaSure if it looks wrong)'
+      : aiFailed ? " (AI couldn't categorize this one — please set the right category)" : ''
 
     // Auto-assignment must never pick a deactivated agent — unlike
     // agents.js's own GET /, there's no frontend here to filter this
@@ -376,7 +380,7 @@ router.post('/', async (req, res) => {
                 <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticketId}</td></tr>
                 <tr><td style="padding: 8px; background: #f4f7fb;"><strong>From</strong></td><td style="padding: 8px;">${senderEmail}</td></tr>
                 <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Subject</strong></td><td style="padding: 8px;">${subject}</td></tr>
-                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Category / Priority</strong></td><td style="padding: 8px;">${ticketCategory} / ${ticketPriority} (${classificationNote})</td></tr>
+                <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Category / Priority</strong></td><td style="padding: 8px;">${ticketCategory} / ${ticketPriority}${classificationNote}</td></tr>
               </table>
               <p>Log in to KrishaSure to review the full message, adjust the category or priority, or reassign it to a different agent if it's not the right fit for you.</p>
               <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
