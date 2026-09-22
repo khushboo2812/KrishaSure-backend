@@ -1,17 +1,6 @@
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 
-// Single global switch for whether any of the checks below actually
-// block anything (see sql/add_usage_limits.sql). Everything in this
-// file is a no-op — always allowed, never emails anyone — while this
-// is false, so having this wired into user creation and the AI routes
-// ahead of assigning real tiers/limits to any company doesn't change
-// behavior today.
-async function isEnforcementOn() {
-  const result = await pool.query('SELECT enforceUsageLimits FROM PlatformSettings WHERE id = 1')
-  return result.rows[0]?.enforceusagelimits === true
-}
-
 // One email per company per reason per cooldown window (see
 // sql/add_limit_notifications.sql) — without this, someone repeatedly
 // hitting a blocked action (retrying "Add User", mashing "Get AI
@@ -108,20 +97,24 @@ function buildLimitEmail(companyName, reason, details) {
 // Counts active memberships only — a deactivated member shouldn't
 // count against a company's seat limit, same principle as
 // isLastActiveSuperadmin elsewhere in this file's sibling routes.
+//
+// enforceUsageLimits lives on the company itself, not a single global
+// switch — this was a global toggle at first, but that meant turning
+// it on for one pilot client turned it on for every company at once.
+// Per-company means it can be rolled out to one client at a time.
 async function checkUserLimit(companyId) {
-  if (!(await isEnforcementOn())) return { allowed: true }
-
-  const companyResult = await pool.query('SELECT maxUsers FROM Companies WHERE id = $1', [companyId])
-  const maxUsers = companyResult.rows[0]?.maxusers
-  if (maxUsers == null) return { allowed: true }
+  const companyResult = await pool.query('SELECT enforceUsageLimits, maxUsers FROM Companies WHERE id = $1', [companyId])
+  const company = companyResult.rows[0]
+  if (!company || !company.enforceusagelimits) return { allowed: true }
+  if (company.maxusers == null) return { allowed: true }
 
   const countResult = await pool.query(
     'SELECT COUNT(*) FROM Memberships WHERE companyId = $1 AND isActive = true',
     [companyId]
   )
-  if (parseInt(countResult.rows[0].count, 10) >= maxUsers) {
-    notifyLimitCrossed(companyId, 'user_limit', { maxUsers })
-    return { allowed: false, status: 403, message: `This company has reached its plan's limit of ${maxUsers} users — contact your platform administrator to upgrade.` }
+  if (parseInt(countResult.rows[0].count, 10) >= company.maxusers) {
+    notifyLimitCrossed(companyId, 'user_limit', { maxUsers: company.maxusers })
+    return { allowed: false, status: 403, message: `This company has reached its plan's limit of ${company.maxusers} users — contact your platform administrator to upgrade.` }
   }
   return { allowed: true }
 }
@@ -133,11 +126,10 @@ async function checkUserLimit(companyId) {
 // unconditionally, so the count is already accurate the moment
 // enforcement gets switched on, not just from that point forward.
 async function checkAiAccess(companyId) {
-  if (!(await isEnforcementOn())) return { allowed: true }
-
-  const companyResult = await pool.query('SELECT aiEnabled, maxAiRequestsPerMonth FROM Companies WHERE id = $1', [companyId])
+  const companyResult = await pool.query('SELECT enforceUsageLimits, aiEnabled, maxAiRequestsPerMonth FROM Companies WHERE id = $1', [companyId])
   const company = companyResult.rows[0]
-  if (!company || !company.aienabled) {
+  if (!company || !company.enforceusagelimits) return { allowed: true }
+  if (!company.aienabled) {
     notifyLimitCrossed(companyId, 'ai_disabled', {})
     return { allowed: false, status: 403, message: 'AI features are not included in your current plan — contact your platform administrator to upgrade.' }
   }
