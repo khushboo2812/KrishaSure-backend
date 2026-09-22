@@ -44,35 +44,64 @@ async function getCategoryNameToId(companyId) {
   return byName
 }
 
-// Four-tier waterfall, most specific wins, for the same priority:
+// Six-tier waterfall, most specific wins, for the same priority. A
+// ticket is either tied to one client org or is "internal"
+// (clientOrgId NULL — the MSP's own tickets, not filed on behalf of a
+// client), never both, so only one of tiers 1-2 or 3-4 ever applies to
+// a given ticket:
 // 1. this client org + this category
 // 2. this client org, any category
-// 3. this category, any client org (the original category override)
-// 4. company-wide default (neither set)
-// An MSP manages several client orgs that can each have their own
-// contracted SLA times — without the client-org tiers, every client
-// org under one company was forced to share identical SLA rules, the
-// same problem category-scoping solved for categories. A found rule
-// with maxHours NULL means "no SLA limit" for whatever it matched —
-// deliberately, not the same as "no rule configured" (which still
-// falls through to a less specific tier).
+// 3. internal-only + this category (a ticket with no client org)
+// 4. internal-only, any category
+// 5. this category, any client org/internal (the original category override)
+// 6. company-wide default (nothing set)
+// Tier 5-6 rules (clientOrgId NULL, internalOnly false) still apply to
+// both client-org tickets without their own override AND internal
+// tickets without their own internalOnly override — internalOnly only
+// carves out a tier ABOVE that shared fallback, it doesn't remove
+// internal tickets from it. A found rule with maxHours NULL means "no
+// SLA limit" for whatever it matched — deliberately, not the same as
+// "no rule configured" (which still falls through to a less specific
+// tier).
+//
+// idsMatch, not ===: Tickets.clientOrgId is int4 (pg driver hands back
+// a JS number), but SLARules.clientOrgId is bigint (pg driver hands
+// back a string, to avoid precision loss) — same actual id, different
+// JS type, so a straight === silently never matched and every
+// client-org-specific rule fell through to the company-wide default
+// instead. Confirmed live: ticket KS-024's clientOrgId (integer 3)
+// against SLARules.clientOrgId (bigint "3") — pg_typeof showed
+// "integer" vs "bigint" for what's numerically the same id.
+function idsMatch(a, b) {
+  return a != null && b != null && Number(a) === Number(b)
+}
+
 function resolveSlaRule(ticket, slaRules, categoryNameToId) {
   const categoryId = categoryNameToId?.[ticket.category]
   const clientOrgId = ticket.clientorgid
+  const isInternal = clientOrgId == null
 
   if (clientOrgId != null && categoryId !== undefined) {
-    const rule = slaRules.find(r => r.priority === ticket.priority && r.clientorgid === clientOrgId && r.categoryid === categoryId)
+    const rule = slaRules.find(r => r.priority === ticket.priority && idsMatch(r.clientorgid, clientOrgId) && idsMatch(r.categoryid, categoryId))
     if (rule) return rule
   }
   if (clientOrgId != null) {
-    const rule = slaRules.find(r => r.priority === ticket.priority && r.clientorgid === clientOrgId && r.categoryid === null)
+    const rule = slaRules.find(r => r.priority === ticket.priority && idsMatch(r.clientorgid, clientOrgId) && r.categoryid === null)
+    if (rule) return rule
+  }
+  if (isInternal && categoryId !== undefined) {
+    const rule = slaRules.find(r => r.priority === ticket.priority && r.internalonly === true && idsMatch(r.categoryid, categoryId))
+    if (rule) return rule
+  }
+  if (isInternal) {
+    const rule = slaRules.find(r => r.priority === ticket.priority && r.internalonly === true && r.categoryid === null)
     if (rule) return rule
   }
   if (categoryId !== undefined) {
-    const rule = slaRules.find(r => r.priority === ticket.priority && r.clientorgid == null && r.categoryid === categoryId)
+    const rule = slaRules.find(r => r.priority === ticket.priority && r.clientorgid == null && r.internalonly === false && idsMatch(r.categoryid, categoryId))
     if (rule) return rule
   }
-  return slaRules.find(r => r.priority === ticket.priority && r.categoryid === null && r.clientorgid == null) || null
+  return slaRules.find(r => r.priority === ticket.priority && r.categoryid === null && r.clientorgid == null && r.internalonly === false) || null
 }
 
 // A reopened ticket's current round is measured from when it was
@@ -114,7 +143,7 @@ router.get('/agent-performance', authenticateToken, requireSuperadmin, async (re
     const businessHours = await getCompanyBusinessHours(companyId)
     const clientOrgBusinessHoursById = await getClientOrgBusinessHoursById(companyId)
     const categoryNameToId = await getCategoryNameToId(companyId)
-    const slaRulesResult = await pool.query('SELECT priority, categoryId, clientOrgId, maxHours FROM SLARules WHERE companyId = $1', [companyId])
+    const slaRulesResult = await pool.query('SELECT priority, categoryId, clientOrgId, internalOnly, maxHours FROM SLARules WHERE companyId = $1', [companyId])
     const slaRules = slaRulesResult.rows
 
     // Every ticket assigned to any of this company's agents — resolved-
@@ -250,7 +279,7 @@ router.get('/ticket-trends', authenticateToken, requireSuperadmin, async (req, r
     const businessHours = await getCompanyBusinessHours(companyId)
     const clientOrgBusinessHoursById = await getClientOrgBusinessHoursById(companyId)
     const categoryNameToId = await getCategoryNameToId(companyId)
-    const slaRulesResult = await pool.query('SELECT priority, categoryId, clientOrgId, maxHours FROM SLARules WHERE companyId = $1', [companyId])
+    const slaRulesResult = await pool.query('SELECT priority, categoryId, clientOrgId, internalOnly, maxHours FROM SLARules WHERE companyId = $1', [companyId])
     const slaRules = slaRulesResult.rows
 
     const byBucket = {}
