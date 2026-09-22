@@ -777,6 +777,17 @@ router.put('/:id/active', authenticateToken, async (req, res) => {
         pastTense: 'deactivated'
       })
       if (conflict) return res.status(conflict.status).json(conflict.body)
+    } else {
+      // Reactivating is functionally the same as adding a user back —
+      // it raises the active count the exact same way, so it has to be
+      // blocked by the same seat-limit check POST / already applies.
+      // Without this, a company the grace-period job just deactivated
+      // extras on could just reactivate them right back, making the
+      // whole enforcement pointless.
+      const userLimitCheck = await checkUserLimit(companyId)
+      if (!userLimitCheck.allowed) {
+        return res.status(userLimitCheck.status).json({ error: userLimitCheck.message })
+      }
     }
 
     await pool.query('UPDATE Memberships SET isActive = $1 WHERE id = $2 AND companyId = $3', [isActive, id, companyId])
