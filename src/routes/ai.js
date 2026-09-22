@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 const { GoogleGenerativeAI } = require('@google/generative-ai')
 const { authenticateToken } = require('../middleware/auth')
-const { checkAiAccess, logAiUsage } = require('../utils/usageLimits')
+const { checkAiAccess, logAiUsage, notifyLimitCrossed } = require('../utils/usageLimits')
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
 
@@ -153,6 +153,18 @@ async function generateWithRetry(fn) {
   throw lastErr
 }
 
+// Lets the frontend check ahead of time whether this company can use
+// AI at all right now, so the "Get AI Suggestion" button can be
+// hidden/greyed with a reason instead of showing normally and only
+// failing after the person clicks it. Reuses checkAiAccess exactly —
+// same reasons (AI not in the plan, monthly cap reached), same
+// wording — so this can never drift out of sync with what actually
+// happens when the button is clicked.
+router.get('/status', authenticateToken, async (req, res) => {
+  const accessCheck = await checkAiAccess(req.user.companyId)
+  res.json({ available: accessCheck.allowed, reason: accessCheck.allowed ? null : accessCheck.message })
+})
+
 // gemini-2.0-flash was retired by Google (confirmed live: the API
 // returned 404 "This model models/gemini-2.0-flash is no longer
 // available. Please update your code to use models/gemini-3.6-flash").
@@ -160,6 +172,7 @@ async function generateWithRetry(fn) {
 router.post('/suggest', authenticateToken, async (req, res) => {
   const accessCheck = await checkAiAccess(req.user.companyId)
   if (!accessCheck.allowed) {
+    notifyLimitCrossed(req.user.companyId, accessCheck.reason, accessCheck.details)
     return res.status(accessCheck.status).json({ error: accessCheck.message })
   }
 
@@ -201,6 +214,7 @@ router.post('/suggest', authenticateToken, async (req, res) => {
 router.post('/chat', authenticateToken, async (req, res) => {
   const accessCheck = await checkAiAccess(req.user.companyId)
   if (!accessCheck.allowed) {
+    notifyLimitCrossed(req.user.companyId, accessCheck.reason, accessCheck.details)
     return res.status(accessCheck.status).json({ error: accessCheck.message })
   }
 
