@@ -97,4 +97,20 @@ function getEffectiveBusinessHours(companyBusinessHours, clientOrgBusinessHours)
   return companyBusinessHours
 }
 
-module.exports = { businessMillisecondsElapsed, businessHoursElapsed, getEffectiveBusinessHours, getZonedParts, zonedTimeToUtc }
+// SLA time for a ticket's current round: business hours since it was
+// created (or last reopened) up to `end`, minus the time it spent
+// Pending — waiting on the client doesn't count against the team.
+// Covers both finished Pending periods (pausedBusinessHours) and one
+// still running (pendingSince). Mirrored in the frontend's
+// ticketHelpers.js so live timers agree with reports.
+function activeBusinessHours(ticket, end, businessHours) {
+  const start = ticket.reopenedat || ticket.createdat
+  let hrs = businessHoursElapsed(start, end, businessHours) - (Number(ticket.pausedbusinesshours) || 0)
+  if (ticket.pendingsince) {
+    const pendingStart = new Date(ticket.pendingsince) > new Date(start) ? ticket.pendingsince : start
+    hrs -= businessHoursElapsed(pendingStart, end, businessHours)
+  }
+  return Math.max(0, hrs)
+}
+
+module.exports = { businessMillisecondsElapsed, businessHoursElapsed, activeBusinessHours, getEffectiveBusinessHours, getZonedParts, zonedTimeToUtc }

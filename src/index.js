@@ -85,3 +85,10 @@ const { enforceExpiredGracePeriods } = require('./utils/overLimitTracking')
 const GRACE_PERIOD_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
 setTimeout(() => enforceExpiredGracePeriods().catch(err => console.error('Grace-period check failed:', err.message)), 60 * 1000)
 setInterval(() => enforceExpiredGracePeriods().catch(err => console.error('Grace-period check failed:', err.message)), GRACE_PERIOD_CHECK_INTERVAL_MS)
+
+// Pending (waiting-on-client) tickets: reminder after 3 working days,
+// auto-close after 5. Hourly so a reminder isn't up to a day late.
+const { runPendingFollowUps } = require('./utils/pendingTickets')
+const PENDING_FOLLOW_UP_INTERVAL_MS = 60 * 60 * 1000
+setTimeout(() => runPendingFollowUps().catch(err => console.error('Pending follow-up failed:', err.message)), 90 * 1000)
+setInterval(() => runPendingFollowUps().catch(err => console.error('Pending follow-up failed:', err.message)), PENDING_FOLLOW_UP_INTERVAL_MS)

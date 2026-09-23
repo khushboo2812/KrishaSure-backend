@@ -55,7 +55,7 @@ router.get('/ticket-trends', async (req, res) => {
     // business-hours config, so there's no single SQL expression that
     // could classify every row correctly.
     const resolvedRawResult = await pool.query(
-      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.companyId, t.clientOrgId, t.priority, t.createdAt, t.resolvedAt
+      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.companyId, t.clientOrgId, t.priority, t.createdAt, t.resolvedAt, t.pausedBusinessHours
        FROM Tickets t
        WHERE t.status = 'Resolved' AND t.resolvedAt >= $2`,
       [bucket, start]
@@ -104,7 +104,7 @@ router.get('/ticket-trends', async (req, res) => {
       if (rule) {
         byBucket[key].eligiblecnt++
         const effective = getEffectiveBusinessHours(businessHoursByCompany[row.companyid], businessHoursByClientOrg[row.clientorgid])
-        const hrs = businessHoursElapsed(row.createdat, row.resolvedat, effective)
+        const hrs = businessHoursElapsed(row.createdat, row.resolvedat, effective) - (Number(row.pausedbusinesshours) || 0)
         if (hrs <= rule.maxhours) byBucket[key].withinslacnt++
       }
     }

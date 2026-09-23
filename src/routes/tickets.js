@@ -6,6 +6,7 @@ const { authenticateToken, requireNotClient } = require('../middleware/auth')
 const { generateTicketId } = require('../utils/ticketId')
 const { getTicketReplyFromAddress } = require('../utils/supportEmail')
 const { PRIORITIES } = require('../utils/classifyTicket')
+const { markPending, resumeFromPending, currentPendingHours } = require('../utils/pendingTickets')
 
 // Tickets only stores clientEmail (a ticket can come in from someone
 // with no People row at all, historically, or a typo'd address), so
@@ -139,6 +140,22 @@ router.put('/:id', authenticateToken, requireNotClient, async (req, res) => {
       return res.status(404).json({ error: 'Ticket not found' })
     }
 
+    // Going Pending needs a note for the client and starts the SLA
+    // pause, so it only happens through POST /:id/pending.
+    if (status === 'Pending' && ticket.status !== 'Pending') {
+      return res.status(400).json({ error: 'Use "Mark as Pending" to put a ticket on hold for the client.' })
+    }
+
+    // Leaving Pending here (resolving it, or moving it on) banks the
+    // time it spent waiting so the SLA clock skips it.
+    if (ticket.status === 'Pending' && status !== 'Pending') {
+      const pausedHours = await currentPendingHours(ticket)
+      await pool.query(
+        'UPDATE Tickets SET pausedBusinessHours = pausedBusinessHours + $1, pendingSince = NULL, pendingReminderSentAt = NULL WHERE id = $2 AND companyId = $3',
+        [pausedHours, id, companyId]
+      )
+    }
+
     await pool.query(
       'UPDATE Tickets SET status = $1, assignedTo = $2, resolvedAt = $3 WHERE id = $4 AND companyId = $5',
       [status, assignedTo, resolvedAt, id, companyId]
@@ -268,6 +285,64 @@ router.put('/:id/classification', authenticateToken, requireNotClient, async (re
   }
 })
 
+// Puts a ticket on hold while the team waits on the client: the SLA
+// clock pauses, the note is posted as a comment and emailed to the
+// client, and a client reply (in the app or by email) resumes it.
+router.post('/:id/pending', authenticateToken, requireNotClient, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId, name, email } = req.user
+    const note = typeof req.body.note === 'string' ? req.body.note.trim() : ''
+
+    if (!note) {
+      return res.status(400).json({ error: 'Say what you need from the client.' })
+    }
+    if (note.length > 500) {
+      return res.status(400).json({ error: 'Keep the note to 500 characters or fewer.' })
+    }
+
+    const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
+    const ticket = ticketResult.rows[0]
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' })
+    }
+    if (ticket.status === 'Resolved') {
+      return res.status(400).json({ error: 'A resolved ticket can\'t be put on hold. Reopen it first.' })
+    }
+    if (ticket.status === 'Pending') {
+      return res.status(400).json({ error: 'This ticket is already waiting on the client.' })
+    }
+
+    await markPending(ticket, { note, byName: name, byEmail: email })
+    res.json({ message: 'Ticket is now waiting on the client.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Takes a ticket off hold without a client reply (e.g. the client
+// answered by phone).
+router.post('/:id/resume', authenticateToken, requireNotClient, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId, name } = req.user
+
+    const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
+    const ticket = ticketResult.rows[0]
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' })
+    }
+    if (ticket.status !== 'Pending') {
+      return res.status(400).json({ error: 'This ticket isn\'t waiting on the client.' })
+    }
+
+    await resumeFromPending(ticket, { byName: name, notifyAgent: false })
+    res.json({ message: 'Ticket is back in the queue.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // POST reopen ticket
 router.post('/:id/reopen', authenticateToken, async (req, res) => {
   try {
@@ -304,7 +379,7 @@ router.post('/:id/reopen', authenticateToken, async (req, res) => {
     // left untouched — ticket age and sort order elsewhere still
     // reflect when it was actually first filed.
     await pool.query(
-      "UPDATE Tickets SET status = 'Open/Assigned', reopenedAt = NOW() WHERE id = $1",
+      "UPDATE Tickets SET status = 'Open/Assigned', reopenedAt = NOW(), pausedBusinessHours = 0, pendingSince = NULL, pendingReminderSentAt = NULL WHERE id = $1",
       [id]
     )
 
