@@ -4,13 +4,12 @@ const { pool } = require('../config/db')
 const { authenticateToken } = require('../middleware/auth')
 const { notifyNewComment } = require('../utils/commentNotifications')
 const { resumeFromPending } = require('../utils/pendingTickets')
-const { ticketBelongsToCompany, commentBelongsToCompany } = require('../utils/ticketAccess')
+const { canAccessTicket, commentBelongsToCompany } = require('../utils/ticketAccess')
 
 router.get('/:ticketId', authenticateToken, async (req, res) => {
   try {
     const { ticketId } = req.params
-    const { companyId } = req.user
-    if (!(await ticketBelongsToCompany(pool, ticketId, companyId))) {
+    if (!(await canAccessTicket(pool, ticketId, req.user))) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
     const result = await pool.query(
@@ -27,9 +26,9 @@ router.post('/:ticketId', authenticateToken, async (req, res) => {
   try {
     const { ticketId } = req.params
     const { comment } = req.body
-    const { name, email, companyId } = req.user
+    const { name, email } = req.user
 
-    if (!(await ticketBelongsToCompany(pool, ticketId, companyId))) {
+    if (!(await canAccessTicket(pool, ticketId, req.user))) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
 

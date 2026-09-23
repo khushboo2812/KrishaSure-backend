@@ -9,6 +9,7 @@ const { generateVerificationToken } = require('../utils/verificationToken')
 const { isValidEmail } = require('../utils/validateEmail')
 const { checkUserLimit } = require('../utils/usageLimits')
 const { checkAndTrackOverLimit } = require('../utils/overLimitTracking')
+const { getAssigneeSupplierCategories, parseCategories } = require('../utils/suppliers')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -50,7 +51,7 @@ async function reassignOpenTicketsIfNeeded({ membership, companyId, reassignTo, 
   if (!agent) return null
 
   const openTicketsResult = await pool.query(
-    `SELECT id, ticketId, title FROM Tickets WHERE assignedTo = $1 AND companyId = $2 AND status != 'Resolved'`,
+    `SELECT id, ticketId, title, category FROM Tickets WHERE assignedTo = $1 AND companyId = $2 AND status != 'Resolved'`,
     [agent.name, companyId]
   )
   const openTickets = openTicketsResult.rows
@@ -80,6 +81,11 @@ async function reassignOpenTicketsIfNeeded({ membership, companyId, reassignTo, 
   )
   if (targetAgent.rows.length === 0) {
     return { status: 400, body: { error: 'The chosen replacement agent was not found or is not active in this company' } }
+  }
+
+  const targetSupplierCategories = await getAssigneeSupplierCategories(pool, reassignTo, companyId)
+  if (targetSupplierCategories && openTickets.some(t => !targetSupplierCategories.includes(t.category))) {
+    return { status: 400, body: { error: `${reassignTo} is a supplier and doesn't cover every category in these tickets. Choose an agent instead.` } }
   }
 
   await pool.query(
@@ -123,7 +129,12 @@ async function getMembershipsForPerson(personId) {
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const { companyId } = req.user
+    const { companyId, role } = req.user
+    // The full user directory (names, emails, roles) is only for the
+    // people who manage users — not clients or outside suppliers.
+    if (role !== 'superadmin' && role !== 'platform_owner') {
+      return res.status(403).json({ error: 'Access denied' })
+    }
     const result = await pool.query(
       `SELECT p.id, m.id AS membershipId, p.name, p.email, m.role, p.createdAt, m.clientOrgId, p.emailVerified, p.mustChangePassword, c.name as clientOrgName, m.isActive
        FROM Memberships m
@@ -192,7 +203,7 @@ router.post('/', authenticateToken, async (req, res) => {
       [personId, companyId, role, clientOrgId || null]
     )
 
-    if (role === 'agent' || (role === 'superadmin' && alsoAgent)) {
+    if (role === 'agent' || role === 'supplier' || (role === 'superadmin' && alsoAgent)) {
       await pool.query(
         'INSERT INTO Agents (name, email, level, skills, companyId) VALUES ($1, $2, $3, $4, $5)',
         [name, email, level || 'Junior', skills || '', companyId]
@@ -261,7 +272,7 @@ router.post('/link-membership', authenticateToken, async (req, res) => {
       [personId, companyId, role, clientOrgId || null]
     )
 
-    if (role === 'agent' || (role === 'superadmin' && alsoAgent)) {
+    if (role === 'agent' || role === 'supplier' || (role === 'superadmin' && alsoAgent)) {
       await pool.query(
         'INSERT INTO Agents (name, email, level, skills, companyId) VALUES ($1, $2, $3, $4, $5)',
         [person.name, person.email, level || 'Junior', skills || '', companyId]
@@ -526,12 +537,28 @@ router.put('/:id/agent-details', authenticateToken, async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT p.name, p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.personId = $1 AND m.companyId = $2`,
+      `SELECT p.name, p.email, m.role FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.personId = $1 AND m.companyId = $2`,
       [id, companyId]
     )
     const person = result.rows[0]
     if (!person) {
       return res.status(404).json({ error: 'User not found' })
+    }
+
+    // A supplier's categories decide which tickets they can see, so they
+    // can't be narrowed while the supplier still holds open tickets
+    // outside the new set.
+    if (person.role === 'supplier') {
+      const allowed = parseCategories(skills)
+      const stranded = await pool.query(
+        `SELECT t.ticketId, t.category FROM Tickets t JOIN Agents a ON a.name = t.assignedTo AND a.companyId = t.companyId
+         WHERE a.email = $1 AND t.companyId = $2 AND t.status != 'Resolved'`,
+        [person.email, companyId]
+      )
+      const outside = stranded.rows.filter(t => !allowed.includes(t.category))
+      if (outside.length > 0) {
+        return res.status(400).json({ error: `${person.name} still has open tickets in categories you're removing (${outside.map(t => t.ticketid).join(', ')}). Reassign them first.` })
+      }
     }
 
     const existingAgent = await pool.query('SELECT id FROM Agents WHERE email = $1 AND companyId = $2', [person.email, companyId])
@@ -614,7 +641,7 @@ router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
 // company staff), so 'client' is deliberately not a valid target here
 // and a client's own membership can't be moved into a staff role either
 // — see the membership.role === 'client' check below.
-const VALID_ROLES = ['agent', 'superadmin']
+const VALID_ROLES = ['agent', 'supplier', 'superadmin']
 
 router.put('/:id/role', authenticateToken, async (req, res) => {
   try {
@@ -654,10 +681,13 @@ router.put('/:id/role', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Cannot change the role of the last active superadmin in this company. Promote another user to superadmin first.' })
     }
 
-    // Moving off 'agent' cuts off their ability to hold tickets, so it
-    // needs the same "don't leave tickets stranded" flow used when
-    // deactivating or removing an agent.
-    if (membership.role === 'agent') {
+    // Moving off 'agent' or 'supplier' changes who can hold (and, for a
+    // supplier, see) their tickets, so it needs the same "don't leave
+    // tickets stranded" flow used when deactivating or removing them.
+    // Their Agents row is kept when moving between agent and supplier,
+    // so their categories carry over.
+    const holdsTickets = r => r === 'agent' || r === 'supplier'
+    if (holdsTickets(membership.role)) {
       const conflict = await reassignOpenTicketsIfNeeded({
         membership, companyId, reassignTo,
         beforeGerund: 'changing their role',
@@ -665,10 +695,12 @@ router.put('/:id/role', authenticateToken, async (req, res) => {
       })
       if (conflict) return res.status(conflict.status).json(conflict.body)
 
-      await pool.query('DELETE FROM Agents WHERE email = $1 AND companyId = $2', [membership.email, companyId])
+      if (!holdsTickets(newRole)) {
+        await pool.query('DELETE FROM Agents WHERE email = $1 AND companyId = $2', [membership.email, companyId])
+      }
     }
 
-    if (newRole === 'agent') {
+    if (holdsTickets(newRole)) {
       const existingAgent = await pool.query('SELECT id FROM Agents WHERE email = $1 AND companyId = $2', [membership.email, companyId])
       if (existingAgent.rows.length === 0) {
         await pool.query(
@@ -713,7 +745,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Cannot remove the last active superadmin in this company. Promote another user to superadmin first.' })
     }
 
-    if (membership && membership.role === 'agent') {
+    if (membership && (membership.role === 'agent' || membership.role === 'supplier')) {
       const conflict = await reassignOpenTicketsIfNeeded({
         membership, companyId, reassignTo,
         beforeGerund: 'removing them from the company',

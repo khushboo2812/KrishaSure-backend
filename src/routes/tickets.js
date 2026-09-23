@@ -7,6 +7,21 @@ const { generateTicketId } = require('../utils/ticketId')
 const { getTicketReplyFromAddress } = require('../utils/supportEmail')
 const { PRIORITIES } = require('../utils/classifyTicket')
 const { markPending, resumeFromPending, currentPendingHours } = require('../utils/pendingTickets')
+const { getSupplierCategories, supplierCanSeeCategory, getAssigneeSupplierCategories, userCanSeeTicket } = require('../utils/suppliers')
+
+// A supplier only reaches tickets in their own categories and a client
+// only their own tickets; anything else answers 404, same as a ticket
+// from another company.
+async function hiddenFromUser(user, ticket) {
+  return !(await userCanSeeTicket(pool, user, ticket))
+}
+
+// A ticket may only be handed to a supplier whose categories include
+// its category — otherwise they'd hold a ticket they can't open.
+async function assigneeCanTake(agentName, companyId, category) {
+  const categories = await getAssigneeSupplierCategories(pool, agentName, companyId)
+  return supplierCanSeeCategory(categories, category)
+}
 
 // Tickets only stores clientEmail (a ticket can come in from someone
 // with no People row at all, historically, or a typo'd address), so
@@ -18,13 +33,17 @@ const { markPending, resumeFromPending, currentPendingHours } = require('../util
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
+    const supplierCategories = await getSupplierCategories(pool, req.user)
+    const ownEmailOnly = req.user.role === 'client' ? req.user.email : null
     const result = await pool.query(
       `SELECT t.*, p.name AS clientName
        FROM Tickets t
        LEFT JOIN People p ON LOWER(p.email) = LOWER(t.clientEmail)
        WHERE t.companyId = $1
+         AND ($2::text[] IS NULL OR t.category = ANY($2::text[]))
+         AND ($3::text IS NULL OR LOWER(t.clientEmail) = LOWER($3::text))
        ORDER BY t.createdAt DESC`,
-      [companyId]
+      [companyId, supplierCategories, ownEmailOnly]
     )
     res.json(result.rows)
   } catch (err) {
@@ -43,7 +62,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
        WHERE t.id = $1 AND t.companyId = $2`,
       [id, companyId]
     )
-    if (result.rows.length === 0) {
+    if (result.rows.length === 0 || await hiddenFromUser(req.user, result.rows[0])) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
     res.json(result.rows[0])
@@ -55,7 +74,14 @@ router.get('/:id', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
+    if (req.user.role === 'supplier') {
+      return res.status(403).json({ error: 'Suppliers can\'t raise tickets' })
+    }
     const { title, description, category, priority, assignedTo, clientEmail, clientOrgId, aiConversation } = req.body
+
+    if (assignedTo && !(await assigneeCanTake(assignedTo, companyId, category))) {
+      return res.status(400).json({ error: `${assignedTo} is a supplier who doesn't cover the ${category} category` })
+    }
 
     const ticketId = await generateTicketId(pool)
 const initialStatus = assignedTo ? 'Open/Assigned' : 'Open/Unassigned'
@@ -136,8 +162,16 @@ router.put('/:id', authenticateToken, requireNotClient, async (req, res) => {
     const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
     const ticket = ticketResult.rows[0]
 
-    if (!ticket) {
+    if (!ticket || await hiddenFromUser(req.user, ticket)) {
       return res.status(404).json({ error: 'Ticket not found' })
+    }
+
+    const assigneeChanging = (assignedTo || null) !== (ticket.assignedto || null)
+    if (assigneeChanging && req.user.role === 'supplier') {
+      return res.status(403).json({ error: 'Suppliers can\'t reassign tickets' })
+    }
+    if (assigneeChanging && assignedTo && !(await assigneeCanTake(assignedTo, companyId, ticket.category))) {
+      return res.status(400).json({ error: `${assignedTo} is a supplier who doesn't cover the ${ticket.category} category` })
     }
 
     // Going Pending needs a note for the client and starts the SLA
@@ -252,6 +286,10 @@ router.put('/:id/classification', authenticateToken, requireNotClient, async (re
     const { companyId, name } = req.user
     const { category, priority } = req.body
 
+    if (req.user.role === 'supplier') {
+      return res.status(403).json({ error: 'Suppliers can\'t change a ticket\'s category or priority' })
+    }
+
     if (!PRIORITIES.includes(priority)) {
       return res.status(400).json({ error: `Priority must be one of: ${PRIORITIES.join(', ')}` })
     }
@@ -261,10 +299,13 @@ router.put('/:id/classification', authenticateToken, requireNotClient, async (re
       return res.status(400).json({ error: 'That category no longer exists — refresh and pick another.' })
     }
 
-    const ticketResult = await pool.query('SELECT category, priority FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
+    const ticketResult = await pool.query('SELECT category, priority, assignedTo FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
     const ticket = ticketResult.rows[0]
     if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found' })
+    }
+    if (ticket.assignedto && !(await assigneeCanTake(ticket.assignedto, companyId, category))) {
+      return res.status(400).json({ error: `${ticket.assignedto} is a supplier who doesn't cover ${category}. Reassign the ticket first.` })
     }
 
     await pool.query(
@@ -303,7 +344,7 @@ router.post('/:id/pending', authenticateToken, requireNotClient, async (req, res
 
     const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
     const ticket = ticketResult.rows[0]
-    if (!ticket) {
+    if (!ticket || await hiddenFromUser(req.user, ticket)) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
     if (ticket.status === 'Resolved') {
@@ -329,7 +370,7 @@ router.post('/:id/resume', authenticateToken, requireNotClient, async (req, res)
 
     const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
     const ticket = ticketResult.rows[0]
-    if (!ticket) {
+    if (!ticket || await hiddenFromUser(req.user, ticket)) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
     if (ticket.status !== 'Pending') {
@@ -353,7 +394,7 @@ router.post('/:id/reopen', authenticateToken, async (req, res) => {
     const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
     const ticket = ticketResult.rows[0]
 
-    if (!ticket) {
+    if (!ticket || await hiddenFromUser(req.user, ticket)) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
 

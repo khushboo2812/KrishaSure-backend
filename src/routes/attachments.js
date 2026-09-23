@@ -4,7 +4,7 @@ const multer = require('multer')
 const { pool } = require('../config/db')
 const { supabase } = require('../config/storage')
 const { authenticateToken } = require('../middleware/auth')
-const { ticketBelongsToCompany, attachmentBelongsToCompany } = require('../utils/ticketAccess')
+const { canAccessTicket, canAccessAttachment } = require('../utils/ticketAccess')
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }) // 10MB cap
 
@@ -18,14 +18,14 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 router.post('/:ticketId', authenticateToken, upload.array('files', 10), async (req, res) => {
   try {
     const { ticketId } = req.params
-    const { email, companyId } = req.user
+    const { email } = req.user
     const files = req.files
 
     if (!files || files.length === 0) {
       return res.status(400).json({ error: 'No file provided' })
     }
 
-    if (!(await ticketBelongsToCompany(pool, ticketId, companyId))) {
+    if (!(await canAccessTicket(pool, ticketId, req.user))) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
 
@@ -78,8 +78,7 @@ router.post('/:ticketId', authenticateToken, upload.array('files', 10), async (r
 router.get('/:ticketId', authenticateToken, async (req, res) => {
   try {
     const { ticketId } = req.params
-    const { companyId } = req.user
-    if (!(await ticketBelongsToCompany(pool, ticketId, companyId))) {
+    if (!(await canAccessTicket(pool, ticketId, req.user))) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
     const result = await pool.query('SELECT * FROM TicketAttachments WHERE ticketId = $1 ORDER BY createdAt ASC', [ticketId])
@@ -93,11 +92,10 @@ router.get('/:ticketId', authenticateToken, async (req, res) => {
 router.get('/download/:attachmentId', authenticateToken, async (req, res) => {
   try {
     const { attachmentId } = req.params
-    const { companyId } = req.user
     const result = await pool.query('SELECT * FROM TicketAttachments WHERE id = $1', [attachmentId])
     const attachment = result.rows[0]
 
-    if (!attachment || !(await attachmentBelongsToCompany(pool, attachmentId, companyId))) {
+    if (!attachment || !(await canAccessAttachment(pool, attachmentId, req.user))) {
       return res.status(404).json({ error: 'Attachment not found' })
     }
 
@@ -118,12 +116,12 @@ router.get('/download/:attachmentId', authenticateToken, async (req, res) => {
 router.delete('/:attachmentId', authenticateToken, async (req, res) => {
   try {
     const { attachmentId } = req.params
-    const { email, companyId } = req.user
+    const { email } = req.user
 
         const result = await pool.query('SELECT * FROM TicketAttachments WHERE id = $1', [attachmentId])
     const attachment = result.rows[0]
 
-    if (!attachment || !(await attachmentBelongsToCompany(pool, attachmentId, companyId))) {
+    if (!attachment || !(await canAccessAttachment(pool, attachmentId, req.user))) {
       return res.status(404).json({ error: 'Attachment not found' })
     }
 
