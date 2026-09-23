@@ -7,6 +7,8 @@ const { supabase } = require('../config/storage')
 const { INACTIVE_COMPANY_MESSAGE } = require('../middleware/auth')
 const { generateTicketId } = require('../utils/ticketId')
 const { classifyTicket } = require('../utils/classifyTicket')
+const { notifyNewComment } = require('../utils/commentNotifications')
+const { resumeFromPending } = require('../utils/pendingTickets')
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
@@ -65,6 +67,56 @@ async function saveInboundAttachments(resend, emailId, attachments, ticketDbId, 
       console.error('Inbound attachment processing error:', attachment.filename, err.message)
     }
   }
+}
+
+const TICKET_ID_IN_SUBJECT = /\bKS-\d+\b/i
+
+// Most mail clients paste the previous message under a reply. Keep only
+// what the sender actually wrote above it, so the ticket thread doesn't
+// fill with repeated copies of earlier emails.
+function stripQuotedReply(text) {
+  const lines = (text || '').split(/\r?\n/)
+  const isQuoteStart = (i) => {
+    const line = lines[i].trim()
+    if (line.startsWith('>')) return true
+    if (/^-{2,}\s*Original Message/i.test(line) || /^_{10,}$/.test(line) || /^From:\s/i.test(line)) return true
+    if (/^On\s.+/i.test(line)) {
+      return /wrote:\s*$/i.test(line) || /wrote:\s*$/i.test((lines[i + 1] || '').trim())
+    }
+    return false
+  }
+  const cut = lines.findIndex((_, i) => isQuoteStart(i))
+  const kept = (cut === -1 ? lines : lines.slice(0, cut)).join('\n').trim()
+  return kept || (text || '').trim()
+}
+
+// A reply to one of our ticket emails keeps the ticket ID in its
+// subject ("Re: New Comment on Ticket KS-024"). It's added to that
+// ticket only when the sender belongs on it: the ticket's own client,
+// a client of the same client organisation, or staff of the company.
+// Anyone else falls through to normal new-ticket handling.
+async function findReplyTarget(subject, person, senderEmail) {
+  const match = (subject || '').match(TICKET_ID_IN_SUBJECT)
+  if (!match) return null
+
+  const ticketResult = await pool.query('SELECT * FROM Tickets WHERE UPPER(ticketId) = UPPER($1)', [match[0]])
+  const ticket = ticketResult.rows[0]
+  if (!ticket) return null
+
+  const companyResult = await pool.query('SELECT isActive FROM Companies WHERE id = $1', [ticket.companyid])
+  if (!companyResult.rows[0]?.isactive) return null
+
+  if ((ticket.clientemail || '').toLowerCase() === senderEmail.toLowerCase()) return { ticket, isClient: true }
+
+  const memberships = await pool.query(
+    'SELECT role, clientOrgId FROM Memberships WHERE personId = $1 AND companyId = $2 AND isActive = true',
+    [person.id, ticket.companyid]
+  )
+  for (const m of memberships.rows) {
+    if (m.role !== 'client') return { ticket, isClient: false }
+    if (ticket.clientorgid != null && Number(m.clientorgid) === Number(ticket.clientorgid)) return { ticket, isClient: true }
+  }
+  return null
 }
 
 function autoAssignAgent(agents, ticketList, category, priority) {
@@ -154,6 +206,30 @@ router.post('/', async (req, res) => {
     }
 
     const person = personResult.rows[0]
+
+    const replyTarget = await findReplyTarget(subject, person, senderEmail)
+    if (replyTarget) {
+      const { ticket, isClient } = replyTarget
+      const comment = stripQuotedReply(body) || '(empty reply)'
+      const inserted = await pool.query(
+        `INSERT INTO TicketComments (ticketId, authorName, authorEmail, comment, sourceEmailId) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (sourceEmailId) DO NOTHING
+         RETURNING id`,
+        [ticket.id, person.name, senderEmail, comment, email_id]
+      )
+      if (inserted.rows.length === 0) {
+        return res.status(200).json({ ticketId: ticket.ticketid, duplicate: true })
+      }
+
+      if (email.attachments && email.attachments.length > 0) {
+        await saveInboundAttachments(resend, email_id, email.attachments, ticket.id, senderEmail)
+      }
+      await notifyNewComment({ ticket, authorName: person.name, authorEmail: senderEmail, comment })
+      if (ticket.status === 'Pending' && isClient) {
+        await resumeFromPending(ticket, { byName: person.name })
+      }
+      return res.status(200).json({ ticketId: ticket.ticketid, reply: true })
+    }
 
     // Each client org can have its own dedicated address on our shared
     // support-email domain (e.g. acme-support@tickets.krishasure.io —

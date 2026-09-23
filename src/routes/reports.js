@@ -3,7 +3,7 @@ const router = express.Router()
 const { pool } = require('../config/db')
 const { authenticateToken, requireSuperadmin } = require('../middleware/auth')
 const { parseWindow, buildTrendSeries } = require('../utils/reportTrends')
-const { businessHoursElapsed, getEffectiveBusinessHours } = require('../utils/businessHours')
+const { activeBusinessHours, getEffectiveBusinessHours } = require('../utils/businessHours')
 
 async function getCompanyBusinessHours(companyId) {
   const result = await pool.query(
@@ -130,7 +130,7 @@ function isWithinSla(ticket, slaRules, companyBusinessHours, clientOrgBusinessHo
   const rule = resolveSlaRule(ticket, slaRules, categoryNameToId)
   if (!rule || rule.maxhours === null) return null
   const effective = getEffectiveBusinessHours(companyBusinessHours, clientOrgBusinessHoursById?.[ticket.clientorgid])
-  return businessHoursElapsed(getTimerStart(ticket), ticket.resolvedat, effective) <= rule.maxhours
+  return activeBusinessHours(ticket, ticket.resolvedat, effective) <= rule.maxhours
 }
 
 // GET per-agent performance for the company, within the date-range window.
@@ -150,7 +150,7 @@ router.get('/agent-performance', authenticateToken, requireSuperadmin, async (re
     // in-window stats and the live open count both come from this one
     // set, computed in JS below rather than as separate SQL aggregates.
     const ticketsResult = await pool.query(
-      `SELECT t.id, t.assignedTo, t.status, t.priority, t.category, t.createdAt, t.resolvedAt, t.reopenedAt, t.clientOrgId
+      `SELECT t.id, t.assignedTo, t.status, t.priority, t.category, t.createdAt, t.resolvedAt, t.reopenedAt, t.clientOrgId, t.pausedBusinessHours, t.pendingSince
        FROM Tickets t
        JOIN Agents a ON a.name = t.assignedTo AND a.companyId = t.companyId
        WHERE t.companyId = $1`,
@@ -183,6 +183,11 @@ router.get('/agent-performance', authenticateToken, requireSuperadmin, async (re
         ? resolutionHours.reduce((sum, h) => sum + h, 0) / resolutionHours.length
         : null
 
+      // Time spent waiting on the client, shown next to the SLA numbers
+      // so a habit of parking tickets in Pending is visible.
+      const pendingNowCount = ticketsForAgent.filter(t => t.status === 'Pending').length
+      const pausedHoursResolved = resolvedInWindow.reduce((sum, t) => sum + (Number(t.pausedbusinesshours) || 0), 0)
+
       const eligible = resolvedInWindow.filter(t => isSlaEligible(t, slaRules, categoryNameToId))
       const breached = eligible.filter(t => isWithinSla(t, slaRules, businessHours, clientOrgBusinessHoursById, categoryNameToId) === false)
 
@@ -194,7 +199,9 @@ router.get('/agent-performance', authenticateToken, requireSuperadmin, async (re
         openCount,
         avgResolutionHours,
         slaBreachRate: eligible.length > 0 ? (breached.length / eligible.length) * 100 : null,
-        hoursLogged: hoursByEmail[agent.email] || 0
+        hoursLogged: hoursByEmail[agent.email] || 0,
+        pendingNowCount,
+        pausedHoursResolved
       }
     })
 
@@ -270,7 +277,7 @@ router.get('/ticket-trends', authenticateToken, requireSuperadmin, async (req, r
     // within-SLA classification per ticket happens in JS, since that
     // needs the business-hours-aware algorithm SQL can't run.
     const resolvedRawResult = await pool.query(
-      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.priority, t.category, t.createdAt, t.resolvedAt, t.reopenedAt, t.clientOrgId
+      `SELECT date_trunc($1, t.resolvedAt) AS bucket, t.priority, t.category, t.createdAt, t.resolvedAt, t.reopenedAt, t.clientOrgId, t.pausedBusinessHours, t.pendingSince
        FROM Tickets t
        WHERE t.companyId = $2 AND t.status = 'Resolved' AND t.resolvedAt >= $3`,
       [bucket, companyId, start]
