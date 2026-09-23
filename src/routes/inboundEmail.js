@@ -9,6 +9,7 @@ const { generateTicketId } = require('../utils/ticketId')
 const { classifyTicket } = require('../utils/classifyTicket')
 const { notifyNewComment } = require('../utils/commentNotifications')
 const { resumeFromPending } = require('../utils/pendingTickets')
+const { parseCategories, getSupplierCategories, supplierCanSeeCategory } = require('../utils/suppliers')
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
@@ -113,16 +114,24 @@ async function findReplyTarget(subject, person, senderEmail) {
     [person.id, ticket.companyid]
   )
   for (const m of memberships.rows) {
+    if (m.role === 'supplier') {
+      const categories = await getSupplierCategories(pool, { role: 'supplier', email: senderEmail, companyId: ticket.companyid })
+      if (supplierCanSeeCategory(categories, ticket.category)) return { ticket, isClient: false }
+      continue
+    }
     if (m.role !== 'client') return { ticket, isClient: false }
     if (ticket.clientorgid != null && Number(m.clientorgid) === Number(ticket.clientorgid)) return { ticket, isClient: true }
   }
   return null
 }
 
+// Suppliers (membershiprole 'supplier') only ever get tickets in their
+// own categories: they're left out of the "nobody has this skill, give
+// it to anyone" fallback.
 function autoAssignAgent(agents, ticketList, category, priority) {
   const isCritical = priority === 'Urgent' || priority === 'High'
-  let matched = agents.filter(a => a.skills && a.skills.split(',').includes(category))
-  if (matched.length === 0) matched = [...agents]
+  let matched = agents.filter(a => parseCategories(a.skills).includes(category))
+  if (matched.length === 0) matched = agents.filter(a => a.membershiprole !== 'supplier')
   if (matched.length === 0) return null
 
   if (isCritical) {
@@ -393,7 +402,7 @@ router.post('/', async (req, res) => {
     // agents.js's own GET /, there's no frontend here to filter this
     // itself, so it's excluded directly in the query.
     const agentsResult = await pool.query(
-      `SELECT a.* FROM Agents a
+      `SELECT a.*, m.role AS membershipRole FROM Agents a
        JOIN People p ON p.email = a.email
        JOIN Memberships m ON m.personId = p.id AND m.companyId = a.companyId
        WHERE a.companyId = $1 AND m.isActive = true`,

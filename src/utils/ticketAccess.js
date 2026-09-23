@@ -8,6 +8,8 @@
 // numeric id. 404 (not 403) on failure, matching tickets.js's own
 // not-found response, so a caller can't distinguish "wrong company" from
 // "doesn't exist."
+const { getSupplierCategories, supplierCanSeeCategory } = require('./suppliers')
+
 async function ticketBelongsToCompany(pool, ticketId, companyId) {
   const result = await pool.query('SELECT id FROM Tickets WHERE id = $1 AND companyId = $2', [ticketId, companyId])
   return result.rows.length > 0
@@ -29,4 +31,26 @@ async function commentBelongsToCompany(pool, commentId, companyId) {
   return result.rows.length > 0
 }
 
-module.exports = { ticketBelongsToCompany, attachmentBelongsToCompany, commentBelongsToCompany }
+// Same company check as above, plus a supplier may only reach tickets
+// in their own categories (see utils/suppliers.js). Routes acting on a
+// ticket's comments or attachments use these rather than the
+// company-only checks, so a supplier can't read a ticket outside their
+// categories just by guessing its id.
+async function canAccessTicket(pool, ticketId, user) {
+  const result = await pool.query('SELECT category FROM Tickets WHERE id = $1 AND companyId = $2', [ticketId, user.companyId])
+  if (result.rows.length === 0) return false
+  const categories = await getSupplierCategories(pool, user)
+  return supplierCanSeeCategory(categories, result.rows[0].category)
+}
+
+async function canAccessAttachment(pool, attachmentId, user) {
+  const result = await pool.query(
+    `SELECT t.category FROM TicketAttachments ta JOIN Tickets t ON t.id = ta.ticketId WHERE ta.id = $1 AND t.companyId = $2`,
+    [attachmentId, user.companyId]
+  )
+  if (result.rows.length === 0) return false
+  const categories = await getSupplierCategories(pool, user)
+  return supplierCanSeeCategory(categories, result.rows[0].category)
+}
+
+module.exports = { ticketBelongsToCompany, attachmentBelongsToCompany, commentBelongsToCompany, canAccessTicket, canAccessAttachment }
