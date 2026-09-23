@@ -37,4 +37,21 @@ async function getAssigneeSupplierCategories(pool, agentName, companyId) {
   return parseCategories(row.skills)
 }
 
-module.exports = { parseCategories, getSupplierCategories, supplierCanSeeCategory, getAssigneeSupplierCategories }
+// Clients only ever reach tickets they raised themselves — matching
+// what the app shows them. Without this, any client could fetch every
+// ticket in the company (including an MSP's other clients' tickets)
+// straight from the API.
+function clientCanSeeTicket(user, ticket) {
+  return user.role !== 'client' || (ticket.clientemail || '').toLowerCase() === (user.email || '').toLowerCase()
+}
+
+// One check for "can this user reach this ticket at all", beyond it
+// being in their company: suppliers are limited to their categories,
+// clients to their own tickets.
+async function userCanSeeTicket(pool, user, ticket) {
+  if (!clientCanSeeTicket(user, ticket)) return false
+  const categories = await getSupplierCategories(pool, user)
+  return supplierCanSeeCategory(categories, ticket.category)
+}
+
+module.exports = { parseCategories, getSupplierCategories, supplierCanSeeCategory, getAssigneeSupplierCategories, clientCanSeeTicket, userCanSeeTicket }

@@ -7,13 +7,13 @@ const { generateTicketId } = require('../utils/ticketId')
 const { getTicketReplyFromAddress } = require('../utils/supportEmail')
 const { PRIORITIES } = require('../utils/classifyTicket')
 const { markPending, resumeFromPending, currentPendingHours } = require('../utils/pendingTickets')
-const { getSupplierCategories, supplierCanSeeCategory, getAssigneeSupplierCategories } = require('../utils/suppliers')
+const { getSupplierCategories, supplierCanSeeCategory, getAssigneeSupplierCategories, userCanSeeTicket } = require('../utils/suppliers')
 
-// A supplier only reaches tickets in their own categories; anything
-// else answers 404, same as a ticket from another company.
-async function hiddenFromSupplier(user, ticket) {
-  const categories = await getSupplierCategories(pool, user)
-  return !supplierCanSeeCategory(categories, ticket.category)
+// A supplier only reaches tickets in their own categories and a client
+// only their own tickets; anything else answers 404, same as a ticket
+// from another company.
+async function hiddenFromUser(user, ticket) {
+  return !(await userCanSeeTicket(pool, user, ticket))
 }
 
 // A ticket may only be handed to a supplier whose categories include
@@ -34,13 +34,16 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const { companyId } = req.user
     const supplierCategories = await getSupplierCategories(pool, req.user)
+    const ownEmailOnly = req.user.role === 'client' ? req.user.email : null
     const result = await pool.query(
       `SELECT t.*, p.name AS clientName
        FROM Tickets t
        LEFT JOIN People p ON LOWER(p.email) = LOWER(t.clientEmail)
-       WHERE t.companyId = $1 AND ($2::text[] IS NULL OR t.category = ANY($2::text[]))
+       WHERE t.companyId = $1
+         AND ($2::text[] IS NULL OR t.category = ANY($2::text[]))
+         AND ($3::text IS NULL OR LOWER(t.clientEmail) = LOWER($3::text))
        ORDER BY t.createdAt DESC`,
-      [companyId, supplierCategories]
+      [companyId, supplierCategories, ownEmailOnly]
     )
     res.json(result.rows)
   } catch (err) {
@@ -59,7 +62,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
        WHERE t.id = $1 AND t.companyId = $2`,
       [id, companyId]
     )
-    if (result.rows.length === 0 || await hiddenFromSupplier(req.user, result.rows[0])) {
+    if (result.rows.length === 0 || await hiddenFromUser(req.user, result.rows[0])) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
     res.json(result.rows[0])
@@ -159,7 +162,7 @@ router.put('/:id', authenticateToken, requireNotClient, async (req, res) => {
     const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
     const ticket = ticketResult.rows[0]
 
-    if (!ticket || await hiddenFromSupplier(req.user, ticket)) {
+    if (!ticket || await hiddenFromUser(req.user, ticket)) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
 
@@ -341,7 +344,7 @@ router.post('/:id/pending', authenticateToken, requireNotClient, async (req, res
 
     const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
     const ticket = ticketResult.rows[0]
-    if (!ticket || await hiddenFromSupplier(req.user, ticket)) {
+    if (!ticket || await hiddenFromUser(req.user, ticket)) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
     if (ticket.status === 'Resolved') {
@@ -367,7 +370,7 @@ router.post('/:id/resume', authenticateToken, requireNotClient, async (req, res)
 
     const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
     const ticket = ticketResult.rows[0]
-    if (!ticket || await hiddenFromSupplier(req.user, ticket)) {
+    if (!ticket || await hiddenFromUser(req.user, ticket)) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
     if (ticket.status !== 'Pending') {
@@ -391,7 +394,7 @@ router.post('/:id/reopen', authenticateToken, async (req, res) => {
     const ticketResult = await pool.query('SELECT * FROM Tickets WHERE id = $1 AND companyId = $2', [id, companyId])
     const ticket = ticketResult.rows[0]
 
-    if (!ticket || await hiddenFromSupplier(req.user, ticket)) {
+    if (!ticket || await hiddenFromUser(req.user, ticket)) {
       return res.status(404).json({ error: 'Ticket not found' })
     }
 
