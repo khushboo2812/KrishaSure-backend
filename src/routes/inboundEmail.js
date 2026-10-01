@@ -9,7 +9,9 @@ const { generateTicketId } = require('../utils/ticketId')
 const { classifyTicket } = require('../utils/classifyTicket')
 const { notifyNewComment } = require('../utils/commentNotifications')
 const { resumeFromPending } = require('../utils/pendingTickets')
-const { parseCategories, getSupplierCategories, supplierCanSeeCategory } = require('../utils/suppliers')
+const { getSupplierCategories, supplierCanSeeCategory } = require('../utils/suppliers')
+const { pickAssignee } = require('../utils/assignment')
+const { getStartLevelName } = require('../utils/agentLevels')
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
@@ -123,31 +125,6 @@ async function findReplyTarget(subject, person, senderEmail) {
     if (ticket.clientorgid != null && Number(m.clientorgid) === Number(ticket.clientorgid)) return { ticket, isClient: true }
   }
   return null
-}
-
-// Suppliers (membershiprole 'supplier') only ever get tickets in their
-// own categories: they're left out of the "nobody has this skill, give
-// it to anyone" fallback.
-function autoAssignAgent(agents, ticketList, category, priority) {
-  const isCritical = priority === 'Urgent' || priority === 'High'
-  let matched = agents.filter(a => parseCategories(a.skills).includes(category))
-  if (matched.length === 0) matched = agents.filter(a => a.membershiprole !== 'supplier')
-  if (matched.length === 0) return null
-
-  if (isCritical) {
-    const seniors = matched.filter(a => a.level === 'Senior')
-    if (seniors.length > 0) matched = seniors
-  } else {
-    const juniors = matched.filter(a => a.level === 'Junior')
-    if (juniors.length > 0) matched = juniors
-  }
-
-  const agentLoad = matched.map(agent => ({
-    agent,
-    count: ticketList.filter(t => t.assignedto === agent.name && t.status !== 'Resolved').length
-  }))
-  agentLoad.sort((a, b) => a.count - b.count)
-  return agentLoad[0].agent.name
 }
 
 router.post('/', async (req, res) => {
@@ -409,7 +386,8 @@ router.post('/', async (req, res) => {
       [companyId]
     )
     const ticketsResult = await pool.query('SELECT * FROM Tickets WHERE companyId = $1', [companyId])
-    const assignedTo = autoAssignAgent(agentsResult.rows, ticketsResult.rows, ticketCategory, ticketPriority)
+    const startLevelName = await getStartLevelName(companyId, ticketPriority)
+    const assignedTo = pickAssignee({ agents: agentsResult.rows, tickets: ticketsResult.rows, category: ticketCategory, startLevelName })?.name || null
 
     const ticketId = await generateTicketId(pool)
     const initialStatus = assignedTo ? 'Open/Assigned' : 'Open/Unassigned'

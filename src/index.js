@@ -11,6 +11,8 @@ const userRoutes = require('./routes/users')
 const setupRoutes = require('./routes/setup')
 const aiRoutes = require('./routes/ai')
 const categoryRoutes = require('./routes/categories')
+const agentLevelRoutes = require('./routes/agentLevels')
+const routingRoutes = require('./routes/routing')
 const slaRoutes = require('./routes/sla')
 const agentRoutes = require('./routes/agents')
 
@@ -48,6 +50,8 @@ app.use('/api/ai', aiRoutes)
 app.use('/api/categories', categoryRoutes)
 app.use('/api/sla', slaRoutes)
 app.use('/api/agents', agentRoutes)
+app.use('/api/agent-levels', agentLevelRoutes)
+app.use('/api/routing', routingRoutes)
 
 const PORT = process.env.PORT || 5000
 app.listen(PORT, () => {
@@ -92,3 +96,11 @@ const { runPendingFollowUps } = require('./utils/pendingTickets')
 const PENDING_FOLLOW_UP_INTERVAL_MS = 60 * 60 * 1000
 setTimeout(() => runPendingFollowUps().catch(err => console.error('Pending follow-up failed:', err.message)), 90 * 1000)
 setInterval(() => runPendingFollowUps().catch(err => console.error('Pending follow-up failed:', err.message)), PENDING_FOLLOW_UP_INTERVAL_MS)
+
+// SLA escalation for companies that have switched it on (Settings ->
+// Assignment & Escalation): hourly, so a breached ticket moves up
+// within the hour.
+const { runEscalations } = require('./utils/escalation')
+const ESCALATION_INTERVAL_MS = 60 * 60 * 1000
+setTimeout(() => runEscalations().catch(err => console.error('Escalation run failed:', err.message)), 120 * 1000)
+setInterval(() => runEscalations().catch(err => console.error('Escalation run failed:', err.message)), ESCALATION_INTERVAL_MS)
