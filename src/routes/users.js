@@ -10,6 +10,7 @@ const { isValidEmail } = require('../utils/validateEmail')
 const { checkUserLimit } = require('../utils/usageLimits')
 const { checkAndTrackOverLimit } = require('../utils/overLimitTracking')
 const { getAssigneeSupplierCategories, parseCategories } = require('../utils/suppliers')
+const { resolveLevelName } = require('../utils/agentLevels')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -172,6 +173,11 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(userLimitCheck.status).json({ error: userLimitCheck.message })
     }
 
+    const agentLevel = await resolveLevelName(companyId, level)
+    if (agentLevel === null) {
+      return res.status(400).json({ error: 'Pick one of your company\'s agent levels.' })
+    }
+
     // If this email already belongs to a real person, don't silently
     // create a duplicate identity and don't silently link them either —
     // hand the admin that person's existing memberships and let them
@@ -206,7 +212,7 @@ router.post('/', authenticateToken, async (req, res) => {
     if (role === 'agent' || role === 'supplier' || (role === 'superadmin' && alsoAgent)) {
       await pool.query(
         'INSERT INTO Agents (name, email, level, skills, companyId) VALUES ($1, $2, $3, $4, $5)',
-        [name, email, level || 'Junior', skills || '', companyId]
+        [name, email, agentLevel, skills || '', companyId]
       )
     }
 
@@ -253,6 +259,11 @@ router.post('/link-membership', authenticateToken, async (req, res) => {
       return res.status(userLimitCheck.status).json({ error: userLimitCheck.message })
     }
 
+    const agentLevel = await resolveLevelName(companyId, level)
+    if (agentLevel === null) {
+      return res.status(400).json({ error: 'Pick one of your company\'s agent levels.' })
+    }
+
     const personResult = await pool.query('SELECT * FROM People WHERE id = $1', [personId])
     const person = personResult.rows[0]
     if (!person) {
@@ -275,7 +286,7 @@ router.post('/link-membership', authenticateToken, async (req, res) => {
     if (role === 'agent' || role === 'supplier' || (role === 'superadmin' && alsoAgent)) {
       await pool.query(
         'INSERT INTO Agents (name, email, level, skills, companyId) VALUES ($1, $2, $3, $4, $5)',
-        [person.name, person.email, level || 'Junior', skills || '', companyId]
+        [person.name, person.email, agentLevel, skills || '', companyId]
       )
     }
 
@@ -561,17 +572,22 @@ router.put('/:id/agent-details', authenticateToken, async (req, res) => {
       }
     }
 
+    const agentLevel = await resolveLevelName(companyId, level)
+    if (agentLevel === null) {
+      return res.status(400).json({ error: 'Pick one of your company\'s agent levels.' })
+    }
+
     const existingAgent = await pool.query('SELECT id FROM Agents WHERE email = $1 AND companyId = $2', [person.email, companyId])
 
     if (existingAgent.rows.length > 0) {
       await pool.query(
         'UPDATE Agents SET level = $1, skills = $2 WHERE email = $3 AND companyId = $4',
-        [level, skills, person.email, companyId]
+        [agentLevel, skills, person.email, companyId]
       )
     } else {
       await pool.query(
         'INSERT INTO Agents (name, email, level, skills, companyId) VALUES ($1, $2, $3, $4, $5)',
-        [person.name, person.email, level, skills, companyId]
+        [person.name, person.email, agentLevel, skills, companyId]
       )
     }
 
@@ -705,7 +721,7 @@ router.put('/:id/role', authenticateToken, async (req, res) => {
       if (existingAgent.rows.length === 0) {
         await pool.query(
           'INSERT INTO Agents (name, email, level, skills, companyId) VALUES ($1, $2, $3, $4, $5)',
-          [membership.name, membership.email, 'Junior', '', companyId]
+          [membership.name, membership.email, await resolveLevelName(companyId, null), '', companyId]
         )
       }
     }

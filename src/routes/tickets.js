@@ -420,7 +420,7 @@ router.post('/:id/reopen', authenticateToken, async (req, res) => {
     // left untouched — ticket age and sort order elsewhere still
     // reflect when it was actually first filed.
     await pool.query(
-      "UPDATE Tickets SET status = 'Open/Assigned', reopenedAt = NOW(), pausedBusinessHours = 0, pendingSince = NULL, pendingReminderSentAt = NULL WHERE id = $1",
+      "UPDATE Tickets SET status = 'Open/Assigned', reopenedAt = NOW(), pausedBusinessHours = 0, pendingSince = NULL, pendingReminderSentAt = NULL, escalatedCount = 0, escalatedAt = NULL, slaWarningSentAt = NULL, escalationAlertSentAt = NULL WHERE id = $1",
       [id]
     )
 

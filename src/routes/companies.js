@@ -8,6 +8,8 @@ const { generateVerificationToken } = require('../utils/verificationToken')
 const { generateSupportEmail } = require('../utils/supportEmail')
 const { isValidEmail } = require('../utils/validateEmail')
 const { checkAndTrackOverLimit, enforceExpiredGracePeriods } = require('../utils/overLimitTracking')
+const { seedDefaultLevels } = require('../utils/agentLevels')
+const { runEscalations } = require('../utils/escalation')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -126,6 +128,8 @@ router.post('/', authenticateToken, requirePlatformOwner, async (req, res) => {
        ($1, NULL, $2, $3), ($4, NULL, $5, $3), ($6, NULL, $7, $3), ($8, NULL, $9, $3)`,
       ['Urgent', 2, companyId, 'High', 8, 'Medium', 24, 'Low', 72]
     )
+
+    await seedDefaultLevels(companyId)
 
     if (verificationToken) {
       sendEmail(
@@ -411,6 +415,8 @@ router.delete('/:id', authenticateToken, requirePlatformOwner, async (req, res) 
     // be cleared too or the final DELETE below violates that constraint.
     await pool.query('DELETE FROM Users WHERE companyId = $1', [id])
     await pool.query('DELETE FROM Agents WHERE companyId = $1', [id])
+    await pool.query('DELETE FROM PriorityRouting WHERE companyId = $1', [id])
+    await pool.query('DELETE FROM AgentLevels WHERE companyId = $1', [id])
     await pool.query('DELETE FROM ClientOrganizations WHERE companyId = $1', [id])
     await pool.query('DELETE FROM SLARules WHERE companyId = $1', [id])
     await pool.query('DELETE FROM Categories WHERE companyId = $1', [id])
@@ -435,6 +441,18 @@ router.post('/run-grace-period-check', authenticateToken, requirePlatformOwner, 
   try {
     await enforceExpiredGracePeriods()
     res.json({ message: 'Grace-period check ran successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST run the SLA escalation job right now instead of waiting for the
+// next hourly tick (see index.js) — for testing escalation without
+// waiting an hour, and for re-checking after a settings change.
+router.post('/run-escalation-check', authenticateToken, requirePlatformOwner, async (req, res) => {
+  try {
+    await runEscalations()
+    res.json({ message: 'Escalation check complete!!' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
