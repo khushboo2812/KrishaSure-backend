@@ -155,7 +155,7 @@ async function escalateCompany(company, now, report = []) {
       const ownLevel = levels.some(l => l.name === assignee.level) ? assignee.level : `"${assignee.level}", which isn't one of your levels`
       note(ticket, isSupplier(assignee)
         ? `SLA breached but it's with ${assignee.name}, an outside supplier: superadmins alerted, not moved`
-        : `SLA breached but ${assignee.name} is at ${ownLevel} and nobody above, up to ${ceiling}, can take it: superadmins alerted, not moved`)
+        : `SLA breached but ${assignee.name} is at ${ownLevel} and nobody above, up to ${ceiling}, has the ${ticket.category} category ticked: superadmins alerted, not moved`)
       const marked = await pool.query(
         "UPDATE Tickets SET escalationAlertSentAt = NOW() WHERE id = $1 AND status = 'Open/Assigned' AND escalationAlertSentAt IS NULL",
         [ticket.id]
@@ -163,7 +163,7 @@ async function escalateCompany(company, now, report = []) {
       if (marked.rowCount > 0 && adminEmails) {
         const why = isSupplier(assignee)
           ? `It's with ${escapeHtml(assignee.name)}, an outside supplier, so it can't be escalated automatically.`
-          : `${escapeHtml(assignee.name)} is already at the highest level it can escalate to.`
+          : `${escapeHtml(assignee.name)} is already at the highest level it can escalate to, or nobody above them covers the ${escapeHtml(ticket.category)} category.`
         sendEmail(
           adminEmails,
           `SLA breached: Ticket ${ticket.ticketid} needs attention`,

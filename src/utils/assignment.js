@@ -51,10 +51,11 @@ function sortLevels(levels) {
 }
 
 // The next person up the ladder from `currentAssignee`, no higher than
-// the priority's ceiling (maxLevelId, null = the top level). Prefers
-// the nearest level above that has someone with the ticket's skill;
-// failing that, the nearest level above with anyone at all. null when
-// they're already at the ceiling or nobody above them can take it.
+// the priority's ceiling (maxLevelId, null = the top level): the
+// nearest level above that has someone who covers the ticket's
+// category. Level and skill both have to match, so a senior who
+// doesn't have the category ticked is never handed the ticket. null
+// when they're already at the ceiling or nobody above qualifies.
 function chooseEscalationTarget({ agents, tickets, currentAssignee, category, levels, maxLevelId }) {
   const ladder = sortLevels(levels)
   if (ladder.length === 0) return null
@@ -69,10 +70,6 @@ function chooseEscalationTarget({ agents, tickets, currentAssignee, category, le
   for (let idx = currentIdx + 1; idx <= maxIdx; idx++) {
     const withSkill = pool.filter(a => a.level === ladder[idx].name && parseSkills(a.skills).includes(category))
     if (withSkill.length > 0) return { agent: leastLoaded(withSkill, tickets), level: ladder[idx] }
-  }
-  for (let idx = currentIdx + 1; idx <= maxIdx; idx++) {
-    const anyone = pool.filter(a => a.level === ladder[idx].name)
-    if (anyone.length > 0) return { agent: leastLoaded(anyone, tickets), level: ladder[idx] }
   }
   return null
 }
