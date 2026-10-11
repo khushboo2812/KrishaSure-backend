@@ -61,7 +61,7 @@ function notifyOverLimitWarning(companyId, companyName, activeCount, maxUsers) {
           <p>You have <strong>${GRACE_PERIOD_WORKING_DAYS} working days</strong> to either deactivate users to fit your plan, or upgrade to a plan with more seats.</p>
           <p style="color: #DC2626; font-weight: 600;">If nothing changes by then, extra users will be automatically deactivated — one superadmin will keep access so you can fix this, but everyone else will be locked out until you do.</p>
           <br/>
-          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
         </div>
       `,
       cc
@@ -141,7 +141,7 @@ function notifyLockout(companyId, keptMembership, companyName, maxUsers) {
             <li>Contact your platform administrator to buy more licenses, then reactivate whoever you need from User Management</li>
           </ul>
           <br/>
-          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
         </div>
       `,
       cc

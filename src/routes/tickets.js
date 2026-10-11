@@ -118,7 +118,7 @@ const agentEmail = agentResult.rows[0]?.email
           </table>
           <p style="color: #64748B; font-size: 12px;">⏱️ Response/resolution timers only count business hours — time outside the support team's working hours doesn't count against your SLA.</p>
           <br/>
-          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
         </div>
       `,
       adminEmails,
@@ -139,7 +139,7 @@ const agentEmail = agentResult.rows[0]?.email
             </table>
             ${hadAiConversation ? '<p style="color: #7C3AED; font-size: 13px; font-weight: 600;">✨ This client already spoke with the AI assistant before filing this ticket and didn\'t get a fix — that conversation is saved on the ticket for you to review.</p>' : ''}
             <br/>
-            <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+            <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
           </div>
         `,
         adminEmails,
@@ -231,7 +231,7 @@ router.put('/:id', authenticateToken, requireNotClient, async (req, res) => {
               <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Resolved By</strong></td><td style="padding: 8px;">${ticket.assignedto}</td></tr>
             </table>
             <br/>
-            <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+            <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
           </div>
         `,
         adminEmails,
@@ -260,7 +260,7 @@ router.put('/:id', authenticateToken, requireNotClient, async (req, res) => {
                 <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Client</strong></td><td style="padding: 8px;">${ticket.clientemail}</td></tr>
               </table>
               <br/>
-              <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+              <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
             </div>
           `,
           adminEmails,
@@ -450,7 +450,7 @@ router.post('/:id/reopen', authenticateToken, async (req, res) => {
           <p>Ticket <strong>${ticket.ticketid}</strong> has been reopened by ${name}.</p>
           <p>It has been reassigned to <strong>${ticket.assignedto}</strong> for follow up.</p>
           <br/>
-          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
         </div>
       `,
       agentEmail ? `${agentEmail},${adminEmails}` : adminEmails,
