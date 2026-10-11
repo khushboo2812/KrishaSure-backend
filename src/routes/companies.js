@@ -451,8 +451,8 @@ router.post('/run-grace-period-check', authenticateToken, requirePlatformOwner, 
 // waiting an hour, and for re-checking after a settings change.
 router.post('/run-escalation-check', authenticateToken, requirePlatformOwner, async (req, res) => {
   try {
-    await runEscalations()
-    res.json({ message: 'Escalation check complete!!' })
+    const report = await runEscalations()
+    res.json({ message: 'Escalation check complete!!', report })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

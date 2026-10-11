@@ -35,19 +35,32 @@ function ticketTable(ticket, extraRows = '') {
 // waiting on the client (Pending) are skipped — their clock is paused.
 // A ticket nobody above can take, or one held by a supplier (who
 // aren't on the ladder), alerts the company's superadmins once instead.
+//
+// Returns a report with one line per unresolved ticket saying what was
+// done or why nothing was — the hourly job ignores it, but the manual
+// check (POST /api/companies/run-escalation-check) shows it, since a
+// ticket that doesn't move has many possible reasons.
 async function runEscalations(now = new Date()) {
-  const companies = await pool.query('SELECT id, name FROM Companies WHERE escalationEnabled = true AND isActive = true')
-  for (const company of companies.rows) {
+  const report = []
+  const all = await pool.query('SELECT id, name, escalationEnabled FROM Companies WHERE isActive = true')
+  for (const company of all.rows) {
+    if (!company.escalationenabled) {
+      report.push({ company: company.name, ticket: null, outcome: 'Escalation is switched off for this company' })
+      continue
+    }
     try {
-      await escalateCompany(company, now)
+      await escalateCompany(company, now, report)
     } catch (err) {
       console.error(`Escalation failed for ${company.name}:`, err.message)
+      report.push({ company: company.name, ticket: null, outcome: `Failed: ${err.message}` })
     }
   }
+  return report
 }
 
-async function escalateCompany(company, now) {
+async function escalateCompany(company, now, report = []) {
   const companyId = company.id
+  const note = (ticket, outcome) => report.push({ company: company.name, ticket: ticket.ticketid, outcome })
   const [levels, routingResult, slaRules, categoryNameToId, companyHours, orgHours] = await Promise.all([
     getCompanyLevels(companyId),
     pool.query('SELECT priority, escalate, maxLevelId FROM PriorityRouting WHERE companyId = $1', [companyId]),
@@ -56,7 +69,10 @@ async function escalateCompany(company, now) {
     getCompanyBusinessHours(companyId),
     getClientOrgBusinessHoursById(companyId)
   ])
-  if (levels.length === 0) return
+  if (levels.length === 0) {
+    report.push({ company: company.name, ticket: null, outcome: 'This company has no agent levels set up' })
+    return
+  }
   const routingByPriority = {}
   routingResult.rows.forEach(r => { routingByPriority[r.priority] = r })
 
@@ -71,6 +87,8 @@ async function escalateCompany(company, now) {
   const allTickets = await pool.query('SELECT * FROM Tickets WHERE companyId = $1', [companyId])
   const tickets = allTickets.rows
   const candidates = tickets.filter(t => (t.status === 'Open/Assigned') && t.assignedto)
+  tickets.filter(t => t.status === 'Pending').forEach(t => note(t, 'Skipped: waiting on the client (Pending), its SLA clock is paused'))
+  tickets.filter(t => t.status !== 'Resolved' && t.status !== 'Pending' && !candidates.includes(t)).forEach(t => note(t, `Skipped: ${t.assignedto ? `status is ${t.status}` : 'not assigned to anyone'}`))
 
   const adminsResult = await pool.query(
     "SELECT p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.role = 'superadmin' AND m.companyId = $1 AND m.isActive = true",
@@ -80,17 +98,18 @@ async function escalateCompany(company, now) {
 
   for (const ticket of candidates) {
     const routing = routingByPriority[ticket.priority]
-    if (routing && routing.escalate === false) continue
+    if (routing && routing.escalate === false) { note(ticket, `Skipped: escalation is unticked for ${ticket.priority} tickets`); continue }
 
     const rule = resolveSlaRule(ticket, slaRules, categoryNameToId)
-    if (!rule || rule.maxhours === null) continue
+    if (!rule) { note(ticket, `Skipped: no SLA rule applies to a ${ticket.priority} ${ticket.category} ticket`); continue }
+    if (rule.maxhours === null) { note(ticket, 'Skipped: its SLA rule is set to no limit'); continue }
     const maxHours = Number(rule.maxhours)
 
     const effective = getEffectiveBusinessHours(companyHours, orgHours?.[ticket.clientorgid])
     const activeHours = activeBusinessHours(ticket, now, effective)
     const state = { activeHours, maxHours, escalatedCount: ticket.escalatedcount || 0 }
     const assignee = agents.find(a => a.name === ticket.assignedto)
-    if (!assignee) continue
+    if (!assignee) { note(ticket, `Skipped: ${ticket.assignedto} isn't an active agent in this company (no Agents row, or the person is deactivated)`); continue }
 
     const replyFromAddress = await getTicketReplyFromAddress(pool, { companyId, clientOrgId: ticket.clientorgid })
 
@@ -99,6 +118,7 @@ async function escalateCompany(company, now) {
         "UPDATE Tickets SET slaWarningSentAt = NOW() WHERE id = $1 AND status = 'Open/Assigned' AND slaWarningSentAt IS NULL",
         [ticket.id]
       )
+      note(ticket, `Close to its SLA (${activeHours.toFixed(1)} of ${maxHours} business hours)${marked.rowCount > 0 ? ': heads-up sent to ' + assignee.name : ': heads-up already sent'}`)
       if (marked.rowCount > 0) {
         sendEmail(
           assignee.email,
@@ -114,7 +134,12 @@ async function escalateCompany(company, now) {
       continue
     }
 
-    if (!escalationDue(state)) continue
+    if (!escalationDue(state)) {
+      note(ticket, state.escalatedCount > 0
+        ? `Escalated ${state.escalatedCount} time(s) already; next at ${(maxHours * (state.escalatedCount + 1)).toFixed(1)} business hours (now ${activeHours.toFixed(1)})`
+        : `Within its SLA: ${activeHours.toFixed(1)} of ${maxHours} business hours used`)
+      continue
+    }
 
     const target = isSupplier(assignee) ? null : chooseEscalationTarget({
       agents: agents.filter(a => !isSupplier(a)),
@@ -126,6 +151,11 @@ async function escalateCompany(company, now) {
     })
 
     if (!target) {
+      const ceiling = levels.find(l => Number(l.id) === Number(routing?.maxlevelid))?.name || 'the top level'
+      const ownLevel = levels.some(l => l.name === assignee.level) ? assignee.level : `"${assignee.level}", which isn't one of your levels`
+      note(ticket, isSupplier(assignee)
+        ? `SLA breached but it's with ${assignee.name}, an outside supplier: superadmins alerted, not moved`
+        : `SLA breached but ${assignee.name} is at ${ownLevel} and nobody above, up to ${ceiling}, has the ${ticket.category} category ticked: superadmins alerted, not moved`)
       const marked = await pool.query(
         "UPDATE Tickets SET escalationAlertSentAt = NOW() WHERE id = $1 AND status = 'Open/Assigned' AND escalationAlertSentAt IS NULL",
         [ticket.id]
@@ -133,7 +163,7 @@ async function escalateCompany(company, now) {
       if (marked.rowCount > 0 && adminEmails) {
         const why = isSupplier(assignee)
           ? `It's with ${escapeHtml(assignee.name)}, an outside supplier, so it can't be escalated automatically.`
-          : `${escapeHtml(assignee.name)} is already at the highest level it can escalate to.`
+          : `${escapeHtml(assignee.name)} is already at the highest level it can escalate to, or nobody above them covers the ${escapeHtml(ticket.category)} category.`
         sendEmail(
           adminEmails,
           `SLA breached: Ticket ${ticket.ticketid} needs attention`,
@@ -153,16 +183,24 @@ async function escalateCompany(company, now) {
        WHERE id = $2 AND status = 'Open/Assigned' AND assignedTo = $3 AND escalatedCount = $4`,
       [target.agent.name, ticket.id, assignee.name, state.escalatedCount]
     )
-    if (moved.rowCount === 0) continue
+    if (moved.rowCount === 0) { note(ticket, 'Skipped: the ticket changed while escalating, will retry next run'); continue }
+    note(ticket, `Escalated: ${assignee.name} (${assignee.level}) -> ${target.agent.name} (${target.level.name})`)
     // Keep the in-memory view current so the next ticket in this run
     // sees the new workload when picking who to escalate to.
     ticket.assignedto = target.agent.name
     ticket.escalatedcount = state.escalatedCount + 1
 
-    await pool.query(
-      'INSERT INTO TicketHistory (ticketId, action, performedBy) VALUES ($1, $2, $3)',
-      [ticket.id, `Escalated from ${assignee.name} to ${target.agent.name} (${target.level.name}) — SLA breached`, 'KrishaSure']
-    )
+    // The ticket has already moved, so a problem writing the history
+    // line (it's a free-text column of unknown width) must not stop the
+    // emails or the rest of the run. Kept short for the same reason.
+    try {
+      await pool.query(
+        'INSERT INTO TicketHistory (ticketId, action, performedBy) VALUES ($1, $2, $3)',
+        [ticket.id, `Escalated to ${target.agent.name}`.slice(0, 50), 'KrishaSure']
+      )
+    } catch (err) {
+      console.error(`Escalation history not recorded for ${ticket.ticketid}:`, err.message)
+    }
 
     sendEmail(
       target.agent.email,

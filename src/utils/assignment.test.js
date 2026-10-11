@@ -65,9 +65,9 @@ test('chooseEscalationTarget', async (t) => {
     assert.equal(chooseEscalationTarget({ ...base, agents, currentAssignee: agents[0] }).agent.name, 'Lee')
   })
 
-  await t.test('no skill match above: nearest level above with anyone', () => {
+  await t.test('no skill match above: nobody qualifies, level alone is not enough', () => {
     const agents = [agent('Ian', 'Intern', 'Hardware'), agent('Ann', 'Agent', 'Finance'), agent('Lee', 'Lead', 'Finance')]
-    assert.equal(chooseEscalationTarget({ ...base, agents, currentAssignee: agents[0] }).agent.name, 'Ann')
+    assert.equal(chooseEscalationTarget({ ...base, agents, currentAssignee: agents[0] }), null)
   })
 
   await t.test('stops at the ceiling', () => {
