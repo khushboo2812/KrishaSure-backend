@@ -107,7 +107,7 @@ async function reassignOpenTicketsIfNeeded({ membership, companyId, reassignTo, 
         </ul>
         <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
         <br/><br/>
-        <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+        <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
       </div>
     `,
     null,
@@ -228,7 +228,7 @@ router.post('/', authenticateToken, async (req, res) => {
           <br/><br/>
           <p style="color: #DC2626; font-size: 13px; font-weight: 600;">⏰ This link is valid for 24 hours only!!</p>
           <p style="color: #64748B; font-size: 12px;">Once verified, you'll receive your login credentials in a separate email.</p>
-          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
         </div>
       `
     )
@@ -381,7 +381,7 @@ router.post('/verify/:token/confirm', async (req, res) => {
           <p>Please login and change your password immediately!!</p>
           <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
           <br/><br/>
-          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
         </div>
       `
     )
@@ -484,7 +484,7 @@ router.post('/:id/resend-verification', authenticateToken, async (req, res) => {
           <a href="https://api.krishasure.io/api/users/verify/${verificationToken}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Verify My Email</a>
           <br/><br/>
           <p style="color: #DC2626; font-size: 13px; font-weight: 600;">⏰ This link is valid for 24 hours only!!</p>
-          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
         </div>
       `
     )
@@ -636,7 +636,7 @@ router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
           <p><strong>Temporary Password:</strong> ${tempPassword}</p>
           <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
           <br/><br/>
-          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
         </div>
       `
     )

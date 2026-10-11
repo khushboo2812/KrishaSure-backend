@@ -182,7 +182,7 @@ router.post('/', async (req, res) => {
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
             <p>This email address isn't registered with KrishaSure. Please contact your account administrator to be set up, or log in directly to raise a ticket.</p>
-            <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+            <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
           </div>
         `,
         null,
@@ -300,7 +300,7 @@ router.post('/', async (req, res) => {
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
               <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
               <p>This email address isn't set up as a client contact with KrishaSure. Please contact your account administrator, or log in directly to raise a ticket.</p>
-              <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+              <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
             </div>
           `,
           null,
@@ -320,7 +320,7 @@ router.post('/', async (req, res) => {
               <p>Please log in and raise the ticket directly so you can pick the right company, or email the company's own dedicated support address if you know it.</p>
               <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
               <br/><br/>
-              <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+              <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
             </div>
           `,
           null,
@@ -346,7 +346,7 @@ router.post('/', async (req, res) => {
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
             <p>${INACTIVE_COMPANY_MESSAGE}.</p>
-            <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+            <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
           </div>
         `,
         null,
@@ -446,7 +446,7 @@ router.post('/', async (req, res) => {
               <p>Log in to KrishaSure to review the full message, adjust the category or priority, or reassign it to a different agent if it's not the right fit for you.</p>
               <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
               <br/><br/>
-              <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+              <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
             </div>
           `,
           adminEmails,
@@ -465,7 +465,7 @@ router.post('/', async (req, res) => {
           <p>Category: ${ticketCategory} · Priority: ${ticketPriority}</p>
           <p>You can log in to KrishaSure to track progress or add details. Our support team will adjust the category or priority if needed.</p>
           <br/>
-          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
         </div>
       `,
       adminEmails,
@@ -483,7 +483,7 @@ router.post('/', async (req, res) => {
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
             <p>Something went wrong on our end while processing your email. Please try again, or log in directly to raise a ticket.</p>
-            <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+            <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
           </div>
         `,
         null,

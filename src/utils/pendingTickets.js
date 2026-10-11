@@ -52,7 +52,7 @@ function emailShell(heading, bodyHtml, headingColor = '#0A2540') {
       ${bodyHtml}
       <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
       <br/><br/>
-      <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+      <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
     </div>
   `
 }

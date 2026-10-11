@@ -67,7 +67,7 @@ function notifyLimitCrossed(companyId, reason, details) {
           ${bodyHtml}
           <p style="color: #64748B; font-size: 13px;">You can adjust ${company.name}'s plan limits from the Platform Dashboard's Companies tab.</p>
           <br/>
-          <p style="color: #64748B; font-size: 12px;">Powered by Krisha Solutions</p>
+          <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
         </div>
       `,
       cc
