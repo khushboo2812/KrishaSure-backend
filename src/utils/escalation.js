@@ -190,10 +190,17 @@ async function escalateCompany(company, now, report = []) {
     ticket.assignedto = target.agent.name
     ticket.escalatedcount = state.escalatedCount + 1
 
-    await pool.query(
-      'INSERT INTO TicketHistory (ticketId, action, performedBy) VALUES ($1, $2, $3)',
-      [ticket.id, `Escalated from ${assignee.name} to ${target.agent.name} (${target.level.name}) — SLA breached`, 'KrishaSure']
-    )
+    // The ticket has already moved, so a problem writing the history
+    // line (it's a free-text column of unknown width) must not stop the
+    // emails or the rest of the run. Kept short for the same reason.
+    try {
+      await pool.query(
+        'INSERT INTO TicketHistory (ticketId, action, performedBy) VALUES ($1, $2, $3)',
+        [ticket.id, `Escalated to ${target.agent.name}`.slice(0, 50), 'KrishaSure']
+      )
+    } catch (err) {
+      console.error(`Escalation history not recorded for ${ticket.ticketid}:`, err.message)
+    }
 
     sendEmail(
       target.agent.email,
