@@ -2,6 +2,7 @@ const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 const { getNotificationRecipients } = require('./usageLimits')
 const { workingDaysBetween } = require('./workingDays')
+const { EMAIL_LOGO } = require('./emailBranding')
 
 const GRACE_PERIOD_WORKING_DAYS = 30
 
@@ -56,6 +57,7 @@ function notifyOverLimitWarning(companyId, companyName, activeCount, maxUsers) {
       `${companyName} is over its plan's user limit`,
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #0A2540;">${companyName} is over its plan's user limit</h1>
           <p><strong>${companyName}</strong> currently has <strong>${activeCount} active users</strong>, but its plan allows <strong>${maxUsers}</strong>.</p>
           <p>You have <strong>${GRACE_PERIOD_WORKING_DAYS} working days</strong> to either deactivate users to fit your plan, or upgrade to a plan with more seats.</p>
@@ -132,6 +134,7 @@ function notifyLockout(companyId, keptMembership, companyName, maxUsers) {
       `${companyName}'s extra users have been deactivated`,
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #0A2540;">${companyName}'s extra users have been deactivated</h1>
           <p>Hi ${keptMembership.name},</p>
           <p><strong>${companyName}</strong> was over its plan's limit of <strong>${maxUsers} users</strong> for ${GRACE_PERIOD_WORKING_DAYS} working days, so the extra users have been deactivated to bring it back within plan.</p>

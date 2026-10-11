@@ -8,6 +8,7 @@ const { getTicketReplyFromAddress } = require('../utils/supportEmail')
 const { PRIORITIES } = require('../utils/classifyTicket')
 const { markPending, resumeFromPending, currentPendingHours } = require('../utils/pendingTickets')
 const { getSupplierCategories, supplierCanSeeCategory, getAssigneeSupplierCategories, userCanSeeTicket } = require('../utils/suppliers')
+const { EMAIL_LOGO } = require('../utils/emailBranding')
 
 // A supplier only reaches tickets in their own categories and a client
 // only their own tickets; anything else answers 404, same as a ticket
@@ -110,6 +111,7 @@ const agentEmail = agentResult.rows[0]?.email
       `Ticket ${ticketId} Created - ${title}`,
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #0A2540;">Ticket Created Successfully!!</h1>
           <table style="width: 100%; border-collapse: collapse;">
             <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticketId}</td></tr>
@@ -132,6 +134,7 @@ const agentEmail = agentResult.rows[0]?.email
         `New Ticket Assigned - ${ticketId}`,
         `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
             <h1 style="color: #0A2540;">New Ticket Assigned to You!!</h1>
             <table style="width: 100%; border-collapse: collapse;">
               <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticketId}</td></tr>
@@ -225,6 +228,7 @@ router.put('/:id', authenticateToken, requireNotClient, async (req, res) => {
         `Ticket ${ticket.ticketid} Resolved!! ✅`,
         `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
             <h1 style="color: #16A34A;">Your Ticket has been Resolved!!</h1>
             <table style="width: 100%; border-collapse: collapse;">
               <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticket.ticketid}</td></tr>
@@ -253,6 +257,7 @@ router.put('/:id', authenticateToken, requireNotClient, async (req, res) => {
           `Ticket Assigned to You - ${ticket.ticketid}`,
           `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
               <h1 style="color: #0A2540;">A Ticket Has Been Assigned to You</h1>
               <table style="width: 100%; border-collapse: collapse;">
                 <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Ticket ID</strong></td><td style="padding: 8px;">${ticket.ticketid}</td></tr>
@@ -446,6 +451,7 @@ router.post('/:id/reopen', authenticateToken, async (req, res) => {
       `Ticket ${ticket.ticketid} Reopened`,
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #F59E0B;">Ticket Reopened</h1>
           <p>Ticket <strong>${ticket.ticketid}</strong> has been reopened by ${name}.</p>
           <p>It has been reassigned to <strong>${ticket.assignedto}</strong> for follow up.</p>

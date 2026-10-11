@@ -10,6 +10,7 @@ const { isValidEmail } = require('../utils/validateEmail')
 const { checkAndTrackOverLimit, enforceExpiredGracePeriods } = require('../utils/overLimitTracking')
 const { seedDefaultLevels } = require('../utils/agentLevels')
 const { runEscalations } = require('../utils/escalation')
+const { EMAIL_LOGO } = require('../utils/emailBranding')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -137,6 +138,7 @@ router.post('/', authenticateToken, requirePlatformOwner, async (req, res) => {
         'Verify your email - KrishaSure 📧',
         `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
             <h1 style="color: #0A2540;">Verify Your Email</h1>
             <p>Hi ${adminName},</p>
             <p>Your company account for <strong>${companyName}</strong> is almost ready. Please verify your email address to activate it.</p>
@@ -193,6 +195,7 @@ router.post('/:id/resend-welcome', authenticateToken, requirePlatformOwner, asyn
       `Welcome to KrishaSure - ${company.name}!! 🎉`,
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #0A2540;">Welcome to KrishaSure!!</h1>
           <p>Hi ${admin.name},</p>
           <p><strong>Email:</strong> ${admin.email}</p>
@@ -250,6 +253,7 @@ router.post('/:id/resend-verification', authenticateToken, requirePlatformOwner,
       'Verify your email - KrishaSure 📧',
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #0A2540;">Verify Your Email</h1>
           <p>Hi ${admin.name},</p>
           <p>Your company account for <strong>${company.name}</strong> is almost ready. Please verify your email address to activate it.</p>

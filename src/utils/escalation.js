@@ -6,10 +6,12 @@ const { resolveSlaRule, getCompanyBusinessHours, getClientOrgBusinessHoursById, 
 const { getCompanyLevels } = require('./agentLevels')
 const { chooseEscalationTarget, escalationDue, warningDue, isSupplier } = require('./assignment')
 const { escapeHtml } = require('./commentNotifications')
+const { EMAIL_LOGO } = require('./emailBranding')
 
 function shell(heading, bodyHtml, color = '#0A2540') {
   return `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
       <h1 style="color: ${color};">${heading}</h1>
       ${bodyHtml}
       <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
