@@ -11,6 +11,7 @@ const { checkAndTrackOverLimit, enforceExpiredGracePeriods } = require('../utils
 const { seedDefaultLevels } = require('../utils/agentLevels')
 const { runEscalations } = require('../utils/escalation')
 const { EMAIL_LOGO } = require('../utils/emailBranding')
+const { APP_URL, API_URL } = require('../config/env')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -142,7 +143,7 @@ router.post('/', authenticateToken, requirePlatformOwner, async (req, res) => {
             <h1 style="color: #0A2540;">Verify Your Email</h1>
             <p>Hi ${adminName},</p>
             <p>Your company account for <strong>${companyName}</strong> is almost ready. Please verify your email address to activate it.</p>
-            <a href="https://api.krishasure.io/api/users/verify/${verificationToken}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Verify My Email</a>
+            <a href="${API_URL}/api/users/verify/${verificationToken}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Verify My Email</a>
             <br/><br/>
             <p style="color: #DC2626; font-size: 13px; font-weight: 600;">⏰ This link is valid for 24 hours only!!</p>
             <p style="color: #64748B; font-size: 12px;">Once verified, you'll receive your login credentials in a separate email.</p>
@@ -200,7 +201,7 @@ router.post('/:id/resend-welcome', authenticateToken, requirePlatformOwner, asyn
           <p>Hi ${admin.name},</p>
           <p><strong>Email:</strong> ${admin.email}</p>
           <p><strong>Temporary Password:</strong> ${tempPassword}</p>
-          <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
+          <a href="${APP_URL}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
           <br/><br/>
           <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
         </div>
@@ -257,7 +258,7 @@ router.post('/:id/resend-verification', authenticateToken, requirePlatformOwner,
           <h1 style="color: #0A2540;">Verify Your Email</h1>
           <p>Hi ${admin.name},</p>
           <p>Your company account for <strong>${company.name}</strong> is almost ready. Please verify your email address to activate it.</p>
-          <a href="https://api.krishasure.io/api/users/verify/${verificationToken}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Verify My Email</a>
+          <a href="${API_URL}/api/users/verify/${verificationToken}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Verify My Email</a>
           <br/><br/>
           <p style="color: #DC2626; font-size: 13px; font-weight: 600;">⏰ This link is valid for 24 hours only!!</p>
           <p style="color: #64748B; font-size: 12px;">Once verified, you'll receive your login credentials in a separate email.</p>

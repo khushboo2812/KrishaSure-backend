@@ -5,6 +5,7 @@ const crypto = require('crypto')
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 const { EMAIL_LOGO } = require('../utils/emailBranding')
+const { APP_URL } = require('../config/env')
 
 const RESET_COOLDOWN_MS = 60 * 1000
 
@@ -65,7 +66,7 @@ router.post('/request', async (req, res) => {
           <p>We received a request to reset your password.</p>
           <p><strong>Your new temporary password:</strong> ${tempPassword}</p>
           <p>Please login and change this password immediately!!</p>
-          <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
+          <a href="${APP_URL}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
           <br/><br/>
           <p style="color: #64748B; font-size: 12px;">If you didn't request this, please contact support immediately.</p>
           <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>

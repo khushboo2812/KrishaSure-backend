@@ -13,6 +13,7 @@ const { getSupplierCategories, supplierCanSeeCategory } = require('../utils/supp
 const { pickAssignee } = require('../utils/assignment')
 const { getStartLevelName } = require('../utils/agentLevels')
 const { EMAIL_LOGO } = require('../utils/emailBranding')
+const { APP_URL } = require('../config/env')
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
@@ -322,7 +323,7 @@ router.post('/', async (req, res) => {
               <h1 style="color: #DC2626;">We couldn't create a ticket automatically</h1>
               <p>Your email address is registered as a client contact with more than one company on KrishaSure, so we can't tell which one this ticket is for.</p>
               <p>Please log in and raise the ticket directly so you can pick the right company, or email the company's own dedicated support address if you know it.</p>
-              <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
+              <a href="${APP_URL}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
               <br/><br/>
               <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
             </div>
@@ -450,7 +451,7 @@ router.post('/', async (req, res) => {
                 <tr><td style="padding: 8px; background: #f4f7fb;"><strong>Category / Priority</strong></td><td style="padding: 8px;">${ticketCategory} / ${ticketPriority}${classificationNote}</td></tr>
               </table>
               <p>Log in to KrishaSure to review the full message, adjust the category or priority, or reassign it to a different agent if it's not the right fit for you.</p>
-              <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
+              <a href="${APP_URL}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>
               <br/><br/>
               <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
             </div>
