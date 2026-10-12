@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs')
 const crypto = require('crypto')
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
+const { EMAIL_LOGO } = require('../utils/emailBranding')
 
 const RESET_COOLDOWN_MS = 60 * 1000
 
@@ -58,6 +59,7 @@ router.post('/request', async (req, res) => {
       'Password Reset - KrishaSure 🔐',
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #0A2540;">Password Reset Request</h1>
           <p>Hi ${person.name},</p>
           <p>We received a request to reset your password.</p>

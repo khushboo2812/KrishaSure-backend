@@ -1,5 +1,6 @@
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
+const { EMAIL_LOGO } = require('./emailBranding')
 
 // One email per company per reason per cooldown window (see
 // sql/add_limit_notifications.sql) — without this, someone repeatedly
@@ -63,6 +64,7 @@ function notifyLimitCrossed(companyId, reason, details) {
       subject,
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #0A2540;">${subject}</h1>
           ${bodyHtml}
           <p style="color: #64748B; font-size: 13px;">You can adjust ${company.name}'s plan limits from the Platform Dashboard's Companies tab.</p>

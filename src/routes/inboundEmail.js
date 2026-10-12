@@ -12,6 +12,7 @@ const { resumeFromPending } = require('../utils/pendingTickets')
 const { getSupplierCategories, supplierCanSeeCategory } = require('../utils/suppliers')
 const { pickAssignee } = require('../utils/assignment')
 const { getStartLevelName } = require('../utils/agentLevels')
+const { EMAIL_LOGO } = require('../utils/emailBranding')
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
@@ -180,6 +181,7 @@ router.post('/', async (req, res) => {
         'Unable to create ticket',
         `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
             <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
             <p>This email address isn't registered with KrishaSure. Please contact your account administrator to be set up, or log in directly to raise a ticket.</p>
             <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
@@ -298,6 +300,7 @@ router.post('/', async (req, res) => {
           'Unable to create ticket',
           `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
               <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
               <p>This email address isn't set up as a client contact with KrishaSure. Please contact your account administrator, or log in directly to raise a ticket.</p>
               <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
@@ -315,6 +318,7 @@ router.post('/', async (req, res) => {
           'Unable to create ticket automatically',
           `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
               <h1 style="color: #DC2626;">We couldn't create a ticket automatically</h1>
               <p>Your email address is registered as a client contact with more than one company on KrishaSure, so we can't tell which one this ticket is for.</p>
               <p>Please log in and raise the ticket directly so you can pick the right company, or email the company's own dedicated support address if you know it.</p>
@@ -344,6 +348,7 @@ router.post('/', async (req, res) => {
         'Unable to create ticket',
         `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
             <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
             <p>${INACTIVE_COMPANY_MESSAGE}.</p>
             <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
@@ -435,6 +440,7 @@ router.post('/', async (req, res) => {
           `New Ticket Assigned (via Email) - ${ticketId}`,
           `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
               <h1 style="color: #0A2540;">New Ticket - Auto-Created from Email</h1>
               <p>This ticket was created automatically from an incoming email${replyFromAddress ? ` to ${replyFromAddress}` : ''}, and auto-assigned to you.</p>
               <table style="width: 100%; border-collapse: collapse;">
@@ -460,6 +466,7 @@ router.post('/', async (req, res) => {
       `Ticket ${ticketId} Created - ${subject}`,
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #0A2540;">Ticket Created Successfully!!</h1>
           <p>We've created ticket <strong>${ticketId}</strong> from your email.</p>
           <p>Category: ${ticketCategory} · Priority: ${ticketPriority}</p>
@@ -481,6 +488,7 @@ router.post('/', async (req, res) => {
         'Unable to create ticket',
         `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
             <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
             <p>Something went wrong on our end while processing your email. Please try again, or log in directly to raise a ticket.</p>
             <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>

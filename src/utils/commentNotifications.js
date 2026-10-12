@@ -1,6 +1,7 @@
 const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 const { getTicketReplyFromAddress } = require('./supportEmail')
+const { EMAIL_LOGO } = require('./emailBranding')
 
 function escapeHtml(text) {
   return String(text ?? '')
@@ -41,6 +42,7 @@ async function notifyNewComment({ ticket, authorName, authorEmail, comment }) {
       `New Comment on Ticket ${ticket.ticketid}`,
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #0A2540;">New Comment Added</h1>
           <p><strong>${escapeHtml(authorName)}</strong> added a comment on ticket <strong>${ticket.ticketid}</strong>:</p>
           <div style="background: #f4f7fb; padding: 16px; border-radius: 8px; margin: 16px 0;">

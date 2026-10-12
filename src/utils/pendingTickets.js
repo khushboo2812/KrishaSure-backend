@@ -4,6 +4,7 @@ const { getTicketReplyFromAddress } = require('./supportEmail')
 const { businessHoursElapsed, getEffectiveBusinessHours } = require('./businessHours')
 const { workingDaysBetween } = require('./workingDays')
 const { escapeHtml } = require('./commentNotifications')
+const { EMAIL_LOGO } = require('./emailBranding')
 
 const PENDING_REMINDER_WORKING_DAYS = 3
 const PENDING_AUTO_CLOSE_WORKING_DAYS = 5
@@ -48,6 +49,7 @@ async function getAgentEmail(ticket) {
 function emailShell(heading, bodyHtml, headingColor = '#0A2540') {
   return `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
       <h1 style="color: ${headingColor};">${heading}</h1>
       ${bodyHtml}
       <a href="https://app.krishasure.io" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Open KrishaSure</a>

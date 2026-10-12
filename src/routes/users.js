@@ -11,6 +11,7 @@ const { checkUserLimit } = require('../utils/usageLimits')
 const { checkAndTrackOverLimit } = require('../utils/overLimitTracking')
 const { getAssigneeSupplierCategories, parseCategories } = require('../utils/suppliers')
 const { resolveLevelName } = require('../utils/agentLevels')
+const { EMAIL_LOGO } = require('../utils/emailBranding')
 
 function generateTempPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$'
@@ -100,6 +101,7 @@ async function reassignOpenTicketsIfNeeded({ membership, companyId, reassignTo, 
     `${openTickets.length} Ticket${openTickets.length === 1 ? '' : 's'} Reassigned to You`,
     `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
         <h1 style="color: #0A2540;">Tickets Reassigned to You</h1>
         <p>${membership.name} was ${pastTense}, and the following ticket${openTickets.length === 1 ? ' was' : 's were'} reassigned to you:</p>
         <ul>
@@ -221,6 +223,7 @@ router.post('/', authenticateToken, async (req, res) => {
       'Verify your email - KrishaSure 📧',
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #0A2540;">Verify Your Email</h1>
           <p>Hi ${name},</p>
           <p>An account has been created for you on KrishaSure. Please verify your email address to activate your account.</p>
@@ -374,6 +377,7 @@ router.post('/verify/:token/confirm', async (req, res) => {
       'Welcome to KrishaSure!! 🎉',
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #0A2540;">Email Verified!! Welcome to KrishaSure!!</h1>
           <p>Hi ${person.name},</p>
           <p><strong>Email:</strong> ${person.email}</p>
@@ -478,6 +482,7 @@ router.post('/:id/resend-verification', authenticateToken, async (req, res) => {
       'Verify your email - KrishaSure 📧',
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #0A2540;">Verify Your Email</h1>
           <p>Hi ${person.name},</p>
           <p>Please verify your email address to activate your KrishaSure account.</p>
@@ -630,6 +635,7 @@ router.post('/:id/resend-welcome', authenticateToken, async (req, res) => {
       'Welcome to KrishaSure!! 🎉',
       `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
           <h1 style="color: #0A2540;">Welcome to KrishaSure!!</h1>
           <p>Hi ${person.name},</p>
           <p><strong>Email:</strong> ${person.email}</p>
