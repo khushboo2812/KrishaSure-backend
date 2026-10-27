@@ -5,7 +5,7 @@
 // Resend for both inbound receiving (MX -> Resend's AWS SES inbound
 // endpoint) and outbound sending (DKIM/SPF), so it doesn't touch or
 // depend on the root domain's mail at all.
-const SUPPORT_EMAIL_DOMAIN = 'tickets.krishasure.io'
+const { SUPPORT_EMAIL_DOMAIN } = require('../config/env')
 
 function slugify(name) {
   return name

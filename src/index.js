@@ -2,6 +2,18 @@
 const express = require('express')
 const cors = require('cors')
 require('dotenv').config()
+const { APP_ENV, IS_UAT } = require('./config/env')
+
+// Safety net: a UAT server must never run against the production
+// database. Set PRODUCTION_DB_HOST (the host part of the production
+// connection string) on the UAT server and it refuses to start if the
+// two match.
+if (IS_UAT && process.env.PRODUCTION_DB_HOST && String(process.env.SUPABASE_DB_URL || '').includes(process.env.PRODUCTION_DB_HOST)) {
+  console.error('Refusing to start: APP_ENV is uat but SUPABASE_DB_URL points at the production database.')
+  process.exit(1)
+}
+console.log(`KrishaSure environment: ${APP_ENV}`)
+
 const { connectDB } = require('./config/db')
 const { sendEmail } = require('./config/email')
 
@@ -30,7 +42,7 @@ app.use(express.json())
 connectDB()
 
 app.get('/', (req, res) => {
-  res.json({ message: 'KrishaSure API is running!! 🚀' })
+  res.json({ message: 'KrishaSure API is running!! 🚀', environment: APP_ENV })
 })
 
 app.get('/test-email', async (req, res) => {
