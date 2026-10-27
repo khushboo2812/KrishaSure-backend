@@ -151,8 +151,8 @@ router.post('/login', async (req, res) => {
 // changing. Proves identity with the same short-lived selectToken that
 // /login hands out, and only works while a change is actually required
 // (mustChangePassword), so it can't be used to reset a normal password
-// without the old one. Returns a fresh selectToken, since typing a new
-// password can take longer than the first one's five minutes.
+// without the old one. It deliberately returns NO new token: after a
+// forced change the person has to log in again with the new password.
 router.post('/set-new-password', async (req, res) => {
   try {
     const { selectToken, password } = req.body
@@ -185,8 +185,7 @@ router.post('/set-new-password', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10)
     await pool.query('UPDATE People SET password = $1, mustChangePassword = false WHERE id = $2', [hashedPassword, person.id])
 
-    const freshSelectToken = jwt.sign({ personId: person.id, purpose: 'select-membership' }, JWT_SECRET, { expiresIn: '5m' })
-    res.json({ message: 'Password updated successfully!!', selectToken: freshSelectToken })
+    res.json({ message: 'Password updated successfully!! Please log in again.' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
