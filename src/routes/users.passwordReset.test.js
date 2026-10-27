@@ -1,4 +1,5 @@
-// Calls the PUT /:id/password handler directly with a fake database.
+// Calls the password handlers in routes/users.js directly with a fake
+// database and a fake mailer.
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const path = require('node:path')
@@ -6,54 +7,84 @@ const bcrypt = require('bcryptjs')
 
 process.env.RESEND_API_KEY = process.env.RESEND_API_KEY || 're_test_key'
 const updates = []
+const emails = []
 const fakePool = {
   query: async (sql, params) => {
     const q = sql.trim()
     if (/^SELECT id FROM Memberships WHERE personId = \$1 AND companyId = \$2/i.test(q)) {
       return { rows: String(params[0]) === '99' ? [] : [{ id: 1 }] }
     }
-    if (/^UPDATE People SET password = \$1, mustChangePassword = \$2/i.test(q)) { updates.push(params); return { rows: [] } }
+    if (/^SELECT \* FROM People WHERE id = \$1/i.test(q)) {
+      return { rows: String(params[0]) === '77' ? [] : [{ id: Number(params[0]), name: 'Tess Tester', email: 'tess@example.com' }] }
+    }
+    if (/^UPDATE People SET password = \$1, mustChangePassword = (true|false)/i.test(q)) {
+      updates.push({ hash: params[0], id: params[1], mustChange: /mustChangePassword = true/i.test(q) })
+      return { rows: [] }
+    }
     throw new Error('unexpected query: ' + q.slice(0, 80))
   }
 }
-const dbPath = require.resolve(path.join(__dirname, '../config/db'))
-require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: { pool: fakePool, connectDB: async () => {} } }
+const set = (rel, exports) => { const p = require.resolve(path.join(__dirname, rel)); require.cache[p] = { id: p, filename: p, loaded: true, exports } }
+set('../config/db', { pool: fakePool, connectDB: async () => {} })
+set('../config/email', { sendEmail: (...args) => { emails.push(args) } })
 const router = require('./users')
 
-const layer = router.stack.find(l => l.route && l.route.path === '/:id/password' && l.route.methods.put)
-const handler = layer.route.stack[layer.route.stack.length - 1].handle
-async function call(id, password, user) {
+function handlerFor(routePath, method) {
+  const layer = router.stack.find(l => l.route && l.route.path === routePath && l.route.methods[method])
+  return layer.route.stack[layer.route.stack.length - 1].handle
+}
+async function call(handler, req) {
   const out = { status: 200, body: null }
   const res = { status(c) { out.status = c; return this }, json(b) { out.body = b; return this } }
-  await handler({ params: { id }, body: { password }, user }, res)
+  await handler(req, res)
   return out
 }
+const changePassword = handlerFor('/:id/password', 'put')
+const sendReset = handlerFor('/:id/send-password-reset', 'post')
 const admin = { personId: 1, companyId: 5, role: 'superadmin' }
 
-test('an admin setting someone else\'s password makes it temporary', async () => {
+test('you can change your own password, and it is final', async () => {
   updates.length = 0
-  const r = await call('42', 'chosen-by-admin', admin)
+  const r = await call(changePassword, { params: { id: '1' }, body: { password: 'my-own-new-pass' }, user: admin })
   assert.equal(r.status, 200); assert.equal(updates.length, 1)
-  assert.ok(await bcrypt.compare('chosen-by-admin', updates[0][0]))
-  assert.equal(updates[0][1], true); assert.equal(updates[0][2], '42')
+  assert.ok(await bcrypt.compare('my-own-new-pass', updates[0].hash)); assert.equal(updates[0].mustChange, false)
 })
 
-test('changing your own password is final, not temporary', async () => {
+test('nobody, admin or not, can type a password for someone else', async () => {
   updates.length = 0
-  const r = await call('1', 'my-own-new-pass', admin)
-  assert.equal(r.status, 200); assert.equal(updates[0][1], false)
-})
-
-test('a platform owner resetting someone else\'s also makes it temporary', async () => {
-  updates.length = 0
-  await call('42', 'platform-chosen', { personId: 2, companyId: 5, role: 'platform_owner' })
-  assert.equal(updates[0][1], true)
-})
-
-test('still refused: too short, not an admin, or not in the admin\'s company', async () => {
-  updates.length = 0
-  assert.equal((await call('42', 'abc', admin)).status, 400)
-  assert.equal((await call('42', 'long-enough', { personId: 1, companyId: 5, role: 'agent' })).status, 403)
-  assert.equal((await call('99', 'long-enough', admin)).status, 404)
+  for (const user of [admin, { personId: 2, companyId: 5, role: 'platform_owner' }, { personId: 3, companyId: 5, role: 'agent' }]) {
+    const r = await call(changePassword, { params: { id: '42' }, body: { password: 'chosen-by-admin' }, user })
+    assert.equal(r.status, 403); assert.match(r.body.error, /only change your own/)
+  }
   assert.equal(updates.length, 0)
+})
+
+test('a short password is refused', async () => {
+  const r = await call(changePassword, { params: { id: '1' }, body: { password: 'abc' }, user: admin })
+  assert.equal(r.status, 400)
+})
+
+test('an admin can send a reset: a temporary password is emailed to the person and the admin never sees it', async () => {
+  updates.length = 0; emails.length = 0
+  const r = await call(sendReset, { params: { id: '42' }, body: {}, user: admin })
+  assert.equal(r.status, 200); assert.match(r.body.message, /Tess Tester/)
+  assert.equal(updates.length, 1); assert.equal(updates[0].mustChange, true); assert.equal(updates[0].id, '42')
+  assert.equal(emails.length, 1); assert.equal(emails[0][0], 'tess@example.com')
+  const temp = emails[0][2].match(/temporary password:<\/strong> (\S+?)<\/p>/)[1]
+  assert.ok(await bcrypt.compare(temp, updates[0].hash))           // the emailed password is the saved one
+  assert.ok(!JSON.stringify(r.body).includes(temp))                // and the admin's response does not contain it
+})
+
+test('a platform owner can send a reset too', async () => {
+  updates.length = 0
+  const r = await call(sendReset, { params: { id: '42' }, body: {}, user: { personId: 2, companyId: 5, role: 'platform_owner' } })
+  assert.equal(r.status, 200); assert.equal(updates[0].mustChange, true)
+})
+
+test('refused for non-admins, for people outside the admin\'s company, and for unknown people', async () => {
+  updates.length = 0; emails.length = 0
+  assert.equal((await call(sendReset, { params: { id: '42' }, body: {}, user: { personId: 3, companyId: 5, role: 'agent' } })).status, 403)
+  assert.equal((await call(sendReset, { params: { id: '99' }, body: {}, user: admin })).status, 404)
+  assert.equal((await call(sendReset, { params: { id: '77' }, body: {}, user: admin })).status, 404)
+  assert.equal(updates.length, 0); assert.equal(emails.length, 0)
 })
