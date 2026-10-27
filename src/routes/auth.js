@@ -137,7 +137,56 @@ router.post('/login', async (req, res) => {
     // token only proves "this is person X, already password-verified"
     // to /select-membership, so the password never needs to be re-sent.
     const selectToken = jwt.sign({ personId: person.id, purpose: 'select-membership' }, JWT_SECRET, { expiresIn: '5m' })
-    res.json({ requiresMembershipSelection: true, selectToken, memberships: usableMemberships })
+    // mustChangePassword lets the login screen ask for a new password BEFORE
+    // the company picker (see /set-new-password below).
+    res.json({ requiresMembershipSelection: true, selectToken, memberships: usableMemberships, mustChangePassword: !!person.mustchangepassword })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Replaces a temporary password BEFORE a company has been chosen. A person
+// has one password across all their companies, so there's no reason to
+// make them pick a company first when the password is what still needs
+// changing. Proves identity with the same short-lived selectToken that
+// /login hands out, and only works while a change is actually required
+// (mustChangePassword), so it can't be used to reset a normal password
+// without the old one. Returns a fresh selectToken, since typing a new
+// password can take longer than the first one's five minutes.
+router.post('/set-new-password', async (req, res) => {
+  try {
+    const { selectToken, password } = req.body
+    if (!selectToken) {
+      return res.status(400).json({ error: 'selectToken is required' })
+    }
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' })
+    }
+
+    let decoded
+    try {
+      decoded = jwt.verify(selectToken, JWT_SECRET)
+    } catch {
+      return res.status(401).json({ error: 'Selection expired — please log in again' })
+    }
+    if (decoded.purpose !== 'select-membership') {
+      return res.status(401).json({ error: 'Invalid token' })
+    }
+
+    const personResult = await pool.query('SELECT id, mustChangePassword FROM People WHERE id = $1', [decoded.personId])
+    const person = personResult.rows[0]
+    if (!person) {
+      return res.status(404).json({ error: 'Account not found' })
+    }
+    if (!person.mustchangepassword) {
+      return res.status(400).json({ error: 'This account does not need a new password' })
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10)
+    await pool.query('UPDATE People SET password = $1, mustChangePassword = false WHERE id = $2', [hashedPassword, person.id])
+
+    const freshSelectToken = jwt.sign({ personId: person.id, purpose: 'select-membership' }, JWT_SECRET, { expiresIn: '5m' })
+    res.json({ message: 'Password updated successfully!!', selectToken: freshSelectToken })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
