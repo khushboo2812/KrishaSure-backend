@@ -501,35 +501,26 @@ router.post('/:id/resend-verification', authenticateToken, async (req, res) => {
   }
 })
 
-// PUT reset password — :id is a personId. One password per person
-// across every membership, so either you're changing your own, or an
-// admin/superadmin is resetting it for someone who is actually a
-// member of their own company (not an arbitrary personId anywhere on
-// the platform — a shared credential now, so this check matters more
-// than it used to).
+// Change your OWN password. A person has one password across every
+// membership, so this is the only way a password is chosen by hand. An
+// admin can no longer type a password for someone else (they would then
+// know a working password for that person): they send a reset instead,
+// see POST /:id/send-password-reset below.
 router.put('/:id/password', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params
     const { password } = req.body
-    const { personId, companyId, role } = req.user
+    const { personId } = req.user
 
-    // Matches the minimum already enforced client-side (Dashboard.jsx's
-    // reset-password modal, Login.jsx's own change-password flow) — the
-    // frontend check alone doesn't stop a direct API call with a
-    // trivial password.
+    // Matches the minimum already enforced client-side (Login.jsx's own
+    // change-password flow) — the frontend check alone doesn't stop a
+    // direct API call with a trivial password.
     if (!password || password.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters' })
     }
 
-    const isOwnPassword = String(id) === String(personId)
-    if (!isOwnPassword) {
-      if (role !== 'superadmin' && role !== 'platform_owner') {
-        return res.status(403).json({ error: 'Access denied' })
-      }
-      const membership = await pool.query('SELECT id FROM Memberships WHERE personId = $1 AND companyId = $2', [id, companyId])
-      if (membership.rows.length === 0) {
-        return res.status(404).json({ error: 'User not found' })
-      }
+    if (String(id) !== String(personId)) {
+      return res.status(403).json({ error: "You can only change your own password. To reset someone else's, send them a password reset email instead." })
     }
 
     const hashedPassword = await bcrypt.hash(password, 10)
@@ -538,6 +529,62 @@ router.put('/:id/password', authenticateToken, async (req, res) => {
       [hashedPassword, id]
     )
     res.json({ message: 'Password updated successfully!!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// An admin (or platform owner) resets someone else's password: the
+// SYSTEM makes a temporary one and emails it to the person, so the admin
+// never sees it. The person must replace it at their next login.
+router.post('/:id/send-password-reset', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { companyId, role } = req.user
+
+    if (role !== 'superadmin' && role !== 'platform_owner') {
+      return res.status(403).json({ error: 'Access denied' })
+    }
+
+    const membership = await pool.query('SELECT id FROM Memberships WHERE personId = $1 AND companyId = $2', [id, companyId])
+    if (membership.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    const personResult = await pool.query('SELECT * FROM People WHERE id = $1', [id])
+    const person = personResult.rows[0]
+    if (!person) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    const tempPassword = generateTempPassword()
+    const hashedPassword = await bcrypt.hash(tempPassword, 10)
+    await pool.query(
+      'UPDATE People SET password = $1, mustChangePassword = true WHERE id = $2',
+      [hashedPassword, id]
+    )
+
+    sendEmail(
+      person.email,
+      'Your KrishaSure password was reset 🔐',
+      `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          ${EMAIL_LOGO}
+          <h1 style="color: #0A2540;">Your password was reset</h1>
+          <p>Hi ${person.name},</p>
+          <p>Your administrator reset your KrishaSure password.</p>
+          <p><strong>Email:</strong> ${person.email}</p>
+          <p><strong>Your new temporary password:</strong> ${tempPassword}</p>
+          <p>You will be asked to choose your own password when you log in.</p>
+          <a href="${APP_URL}" style="background: #00C2CB; color: #0A2540; padding: 12px 24px; border-radius: 8px; text-decoration: none;">Login to KrishaSure</a>
+          <br/><br/>
+          <p style="color: #64748B; font-size: 12px;">If you weren't expecting this, please contact your administrator.</p>
+          <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
+        </div>
+      `
+    )
+
+    res.json({ message: `A password reset email has been sent to ${person.name}.` })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
