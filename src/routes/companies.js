@@ -10,6 +10,7 @@ const { isValidEmail } = require('../utils/validateEmail')
 const { checkAndTrackOverLimit, enforceExpiredGracePeriods } = require('../utils/overLimitTracking')
 const { seedDefaultLevels } = require('../utils/agentLevels')
 const { runEscalations } = require('../utils/escalation')
+const { parsePlanLimits } = require('../utils/planLimits')
 const { EMAIL_LOGO } = require('../utils/emailBranding')
 
 function generateTempPassword() {
@@ -61,6 +62,11 @@ router.post('/', authenticateToken, requirePlatformOwner, async (req, res) => {
   try {
     const { companyName, adminName, adminEmail, tier, companyType, linkExistingPersonId } = req.body
 
+    // Optional plan limits, set at creation so a new company is never
+    // left unlimited by accident (see utils/planLimits.js).
+    const limits = parsePlanLimits(req.body)
+    if (limits.error) return res.status(400).json({ error: limits.error })
+
     let personId = linkExistingPersonId || null
     let verificationToken = null
 
@@ -96,8 +102,10 @@ router.post('/', authenticateToken, requirePlatformOwner, async (req, res) => {
     const supportEmail = await generateSupportEmail(pool, companyName)
 
     const companyResult = await pool.query(
-      'INSERT INTO Companies (name, tier, databaseType, companyType, supportEmail) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-      [companyName, tier || 'starter', 'shared', companyType || 'internal', supportEmail]
+      `INSERT INTO Companies (name, tier, databaseType, companyType, supportEmail, maxUsers, aiEnabled, maxAiRequestsPerMonth, enforceUsageLimits)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+      [companyName, tier || 'starter', 'shared', companyType || 'internal', supportEmail,
+       limits.maxUsers, limits.aiEnabled, limits.maxAiRequestsPerMonth, limits.enforceUsageLimits]
     )
     const companyId = companyResult.rows[0].id
 
@@ -313,12 +321,13 @@ router.put('/:id/active', authenticateToken, requirePlatformOwner, async (req, r
 router.put('/:id/plan-limits', authenticateToken, requirePlatformOwner, async (req, res) => {
   try {
     const { id } = req.params
-    const { maxUsers, aiEnabled, maxAiRequestsPerMonth, enforceUsageLimits } = req.body
+    const limits = parsePlanLimits(req.body)
+    if (limits.error) return res.status(400).json({ error: limits.error })
 
     const result = await pool.query(
       `UPDATE Companies SET maxUsers = $1, aiEnabled = $2, maxAiRequestsPerMonth = $3, enforceUsageLimits = $4
        WHERE id = $5 RETURNING id, name, maxUsers, aiEnabled, maxAiRequestsPerMonth, enforceUsageLimits`,
-      [maxUsers === '' || maxUsers == null ? null : maxUsers, aiEnabled !== false, maxAiRequestsPerMonth === '' || maxAiRequestsPerMonth == null ? null : maxAiRequestsPerMonth, !!enforceUsageLimits, id]
+      [limits.maxUsers, limits.aiEnabled, limits.maxAiRequestsPerMonth, limits.enforceUsageLimits, id]
     )
     const company = result.rows[0]
     if (!company) {
