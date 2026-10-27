@@ -32,7 +32,7 @@ async function call(body) {
 }
 const selectToken = (id, purpose = 'select-membership', exp = '5m') => jwt.sign({ personId: id, purpose }, SECRET, { expiresIn: exp })
 
-test('a person with a temporary password can set a new one before choosing a company', async () => {
+test('a person with a temporary password can set a new one before choosing a company, and is not handed another token', async () => {
   people.set(7, { id: 7, mustchangepassword: true })
   updates.length = 0
   const r = await call({ selectToken: selectToken(7), password: 'brand-new-pass' })
@@ -40,8 +40,8 @@ test('a person with a temporary password can set a new one before choosing a com
   assert.equal(updates.length, 1)
   assert.ok(await bcrypt.compare('brand-new-pass', updates[0][0]))
   assert.equal(updates[0][1], 7)
-  const next = jwt.verify(r.body.selectToken, SECRET)
-  assert.equal(next.personId, 7); assert.equal(next.purpose, 'select-membership')
+  // No new token: the person must log in again with the new password.
+  assert.equal(r.body.selectToken, undefined); assert.equal(r.body.token, undefined)
 })
 
 test('refused when no change is required, so it cannot reset a normal password', async () => {
