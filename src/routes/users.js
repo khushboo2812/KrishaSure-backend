@@ -532,10 +532,13 @@ router.put('/:id/password', authenticateToken, async (req, res) => {
       }
     }
 
+    // A password an admin chose for someone else is only a temporary one:
+    // the admin knows it, so the person must replace it at their next
+    // login. Changing your own password is final.
     const hashedPassword = await bcrypt.hash(password, 10)
     await pool.query(
-      'UPDATE People SET password = $1, mustChangePassword = false WHERE id = $2',
-      [hashedPassword, id]
+      'UPDATE People SET password = $1, mustChangePassword = $2 WHERE id = $3',
+      [hashedPassword, !isOwnPassword, id]
     )
     res.json({ message: 'Password updated successfully!!' })
   } catch (err) {
