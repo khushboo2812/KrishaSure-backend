@@ -7,8 +7,17 @@ const { escapeHtml } = require('./commentNotifications')
 const { EMAIL_LOGO } = require('./emailBranding')
 const { APP_URL } = require('../config/env')
 
-const PENDING_REMINDER_WORKING_DAYS = 3
-const PENDING_AUTO_CLOSE_WORKING_DAYS = 5
+const { DEFAULT_REMINDER_DAYS, DEFAULT_AUTO_CLOSE_DAYS, pendingAction } = require('./pendingSettings')
+
+// The company's own Pending rules (Settings -> Pending tickets). A null
+// day count means that step is switched off; a company row that can't
+// be found falls back to the defaults.
+async function getPendingSettings(companyId) {
+  const result = await pool.query('SELECT pendingReminderDays, pendingAutoCloseDays FROM Companies WHERE id = $1', [companyId])
+  const c = result.rows[0]
+  if (!c) return { reminderDays: DEFAULT_REMINDER_DAYS, closeDays: DEFAULT_AUTO_CLOSE_DAYS }
+  return { reminderDays: c.pendingreminderdays, closeDays: c.pendingautoclosedays }
+}
 
 async function getTicketBusinessHours(ticket) {
   const companyResult = await pool.query(
@@ -71,6 +80,7 @@ async function markPending(ticket, { note, byName, byEmail }) {
   )
   await pool.query('INSERT INTO TicketHistory (ticketId, action, performedBy) VALUES ($1, $2, $3)', [ticket.id, 'Pending', byName])
 
+  const { closeDays } = await getPendingSettings(ticket.companyid)
   const replyFromAddress = await getTicketReplyFromAddress(pool, { companyId: ticket.companyid, clientOrgId: ticket.clientorgid })
   sendEmail(
     ticket.clientemail,
@@ -81,7 +91,7 @@ async function markPending(ticket, { note, byName, byEmail }) {
         <p style="margin: 0; white-space: pre-wrap;">${escapeHtml(note)}</p>
       </div>
       <p>Reply to this email, or add a comment on the ticket in KrishaSure.</p>
-      <p style="color: #64748B; font-size: 13px;">If we don't hear back within ${PENDING_AUTO_CLOSE_WORKING_DAYS} working days, the ticket will be closed. You can reopen it any time within 2 weeks.</p>
+      ${closeDays != null ? `<p style="color: #64748B; font-size: 13px;">If we don't hear back within ${closeDays} working days, the ticket will be closed. You can reopen it any time within 2 weeks.</p>` : ''}
     `),
     null,
     replyFromAddress
@@ -120,18 +130,23 @@ async function resumeFromPending(ticket, { byName, notifyAgent = true } = {}) {
 }
 
 // Hourly job (see index.js): a Pending ticket gets one reminder to the
-// client after PENDING_REMINDER_WORKING_DAYS, and is resolved after
-// PENDING_AUTO_CLOSE_WORKING_DAYS with no reply. Working days are
-// Mon-Fri, same coarse count as the user-limit grace period.
+// client and is resolved after no reply, on each company's own timings
+// (see utils/pendingSettings.js; either can be switched off). Working
+// days are Mon-Fri, same coarse count as the user-limit grace period.
 async function runPendingFollowUps(now = new Date()) {
   const pending = await pool.query("SELECT * FROM Tickets WHERE status = 'Pending' AND pendingSince IS NOT NULL")
+  const settingsByCompany = new Map()
 
   for (const ticket of pending.rows) {
     try {
+      if (!settingsByCompany.has(ticket.companyid)) settingsByCompany.set(ticket.companyid, await getPendingSettings(ticket.companyid))
+      const settings = settingsByCompany.get(ticket.companyid)
       const waited = workingDaysBetween(ticket.pendingsince, now)
+      const action = pendingAction(waited, settings, !!ticket.pendingremindersentat)
+      if (!action) continue
       const replyFromAddress = await getTicketReplyFromAddress(pool, { companyId: ticket.companyid, clientOrgId: ticket.clientorgid })
 
-      if (waited >= PENDING_AUTO_CLOSE_WORKING_DAYS) {
+      if (action === 'close') {
         const pausedHours = await currentPendingHours(ticket, now)
         const result = await pool.query(
           `UPDATE Tickets SET status = 'Resolved', resolvedAt = NOW(), pausedBusinessHours = pausedBusinessHours + $1, pendingSince = NULL, pendingReminderSentAt = NULL
@@ -146,13 +161,13 @@ async function runPendingFollowUps(now = new Date()) {
           ticket.clientemail,
           `Ticket ${ticket.ticketid} closed - no reply received`,
           emailShell('Ticket closed', `
-            <p>We didn't hear back on ticket <strong>${ticket.ticketid}</strong> (${escapeHtml(ticket.title)}) for ${PENDING_AUTO_CLOSE_WORKING_DAYS} working days, so we've closed it.</p>
+            <p>We didn't hear back on ticket <strong>${ticket.ticketid}</strong> (${escapeHtml(ticket.title)}) for ${settings.closeDays} working days, so we've closed it.</p>
             <p>If you still need help, reopen it in KrishaSure within 2 weeks, or raise a new ticket.</p>
           `, '#64748B'),
           agentEmail,
           replyFromAddress
         )
-      } else if (waited >= PENDING_REMINDER_WORKING_DAYS && !ticket.pendingremindersentat) {
+      } else if (action === 'remind') {
         const result = await pool.query(
           "UPDATE Tickets SET pendingReminderSentAt = NOW() WHERE id = $1 AND status = 'Pending' AND pendingReminderSentAt IS NULL",
           [ticket.id]
@@ -163,7 +178,7 @@ async function runPendingFollowUps(now = new Date()) {
           `Reminder: Ticket ${ticket.ticketid} is waiting on your reply`,
           emailShell('We are still waiting on your reply', `
             <p>Ticket <strong>${ticket.ticketid}</strong> (${escapeHtml(ticket.title)}) is on hold until we hear back from you. Please reply to this email or add a comment in KrishaSure.</p>
-            <p style="color: #64748B; font-size: 13px;">If we don't hear back within ${PENDING_AUTO_CLOSE_WORKING_DAYS - waited} more working day${PENDING_AUTO_CLOSE_WORKING_DAYS - waited === 1 ? '' : 's'}, the ticket will be closed.</p>
+            ${settings.closeDays != null ? `<p style="color: #64748B; font-size: 13px;">If we don't hear back within ${settings.closeDays - waited} more working day${settings.closeDays - waited === 1 ? '' : 's'}, the ticket will be closed.</p>` : ''}
           `, '#D97706'),
           null,
           replyFromAddress
@@ -180,6 +195,5 @@ module.exports = {
   resumeFromPending,
   currentPendingHours,
   runPendingFollowUps,
-  PENDING_REMINDER_WORKING_DAYS,
-  PENDING_AUTO_CLOSE_WORKING_DAYS
+  getPendingSettings
 }
