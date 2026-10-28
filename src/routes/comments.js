@@ -4,6 +4,7 @@ const { pool } = require('../config/db')
 const { authenticateToken } = require('../middleware/auth')
 const { notifyNewComment } = require('../utils/commentNotifications')
 const { resumeFromPending } = require('../utils/pendingTickets')
+const { reopenEligibility, reopenTicket } = require('../utils/reopenTicket')
 const { canAccessTicket, commentBelongsToCompany } = require('../utils/ticketAccess')
 
 router.get('/:ticketId', authenticateToken, async (req, res) => {
@@ -41,6 +42,8 @@ router.post('/:ticketId', authenticateToken, async (req, res) => {
     const ticket = ticketResult.rows[0]
 
     let resumed = false
+    let reopened = false
+    let reopenExpired = false
     if (ticket) {
       await notifyNewComment({ ticket, authorName: name, authorEmail: email, comment })
       // A client answering a ticket that's waiting on them puts it back
@@ -48,9 +51,18 @@ router.post('/:ticketId', authenticateToken, async (req, res) => {
       if (ticket.status === 'Pending' && req.user.role === 'client') {
         resumed = await resumeFromPending(ticket, { byName: name })
       }
+      // A client commenting on a resolved ticket reopens it — same rule
+      // as replying by email and as the Reopen button (within 2 weeks of
+      // resolving). Past that the comment is kept but the ticket stays
+      // closed, and the response says so for the screen to explain.
+      if (ticket.status === 'Resolved' && req.user.role === 'client') {
+        const eligibility = reopenEligibility(ticket)
+        if (eligibility === 'ok') reopened = await reopenTicket(ticket, { byName: name })
+        else if (eligibility === 'expired') reopenExpired = true
+      }
     }
 
-    res.status(201).json({ message: 'Comment added successfully!!', resumed })
+    res.status(201).json({ message: 'Comment added successfully!!', resumed, reopened, reopenExpired })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
