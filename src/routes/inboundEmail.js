@@ -5,6 +5,7 @@ const { pool } = require('../config/db')
 const { sendEmail } = require('../config/email')
 const { supabase } = require('../config/storage')
 const { INACTIVE_COMPANY_MESSAGE } = require('../middleware/auth')
+const { TRIAL_ENDED_MESSAGE, isTrialExpired } = require('../utils/trial')
 const { generateTicketId } = require('../utils/ticketId')
 const { classifyTicket } = require('../utils/classifyTicket')
 const { notifyNewComment } = require('../utils/commentNotifications')
@@ -108,8 +109,8 @@ async function findReplyTarget(subject, person, senderEmail) {
   const ticket = ticketResult.rows[0]
   if (!ticket) return null
 
-  const companyResult = await pool.query('SELECT isActive FROM Companies WHERE id = $1', [ticket.companyid])
-  if (!companyResult.rows[0]?.isactive) return null
+  const companyResult = await pool.query('SELECT isActive, trialEndsAt FROM Companies WHERE id = $1', [ticket.companyid])
+  if (!companyResult.rows[0]?.isactive || isTrialExpired(companyResult.rows[0].trialendsat)) return null
 
   if ((ticket.clientemail || '').toLowerCase() === senderEmail.toLowerCase()) return { ticket, isClient: true }
 
@@ -342,8 +343,10 @@ router.post('/', async (req, res) => {
     // log in to see — same underlying "no activity while disabled"
     // principle as the login/mid-session gates, just via email instead
     // of the app.
-    const companyResult = await pool.query('SELECT isActive FROM Companies WHERE id = $1', [companyId])
-    if (!companyResult.rows[0] || !companyResult.rows[0].isactive) {
+    const companyResult = await pool.query('SELECT isActive, trialEndsAt FROM Companies WHERE id = $1', [companyId])
+    const companyRow = companyResult.rows[0]
+    const trialEnded = !!companyRow && isTrialExpired(companyRow.trialendsat)
+    if (!companyRow || !companyRow.isactive || trialEnded) {
       sendEmail(
         senderEmail,
         'Unable to create ticket',
@@ -351,7 +354,7 @@ router.post('/', async (req, res) => {
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           ${EMAIL_LOGO}
             <h1 style="color: #DC2626;">We couldn't create a ticket</h1>
-            <p>${INACTIVE_COMPANY_MESSAGE}.</p>
+            <p>${trialEnded ? TRIAL_ENDED_MESSAGE : INACTIVE_COMPANY_MESSAGE}.</p>
             <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
           </div>
         `,

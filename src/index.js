@@ -116,3 +116,10 @@ const { runEscalations } = require('./utils/escalation')
 const ESCALATION_INTERVAL_MS = 60 * 60 * 1000
 setTimeout(() => runEscalations().catch(err => console.error('Escalation run failed:', err.message)), 120 * 1000)
 setInterval(() => runEscalations().catch(err => console.error('Escalation run failed:', err.message)), ESCALATION_INTERVAL_MS)
+
+// Free-trial emails ("ends in 3 days", "has ended") — hourly, each sent
+// once per trial (see utils/trialReminders.js).
+const { runTrialReminders } = require('./utils/trialReminders')
+const TRIAL_REMINDER_INTERVAL_MS = 60 * 60 * 1000
+setTimeout(() => runTrialReminders().catch(err => console.error('Trial reminder run failed:', err.message)), 150 * 1000)
+setInterval(() => runTrialReminders().catch(err => console.error('Trial reminder run failed:', err.message)), TRIAL_REMINDER_INTERVAL_MS)

@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken')
 const { pool } = require('../config/db')
+const { TRIAL_ENDED_MESSAGE, isTrialExpired } = require('../utils/trial')
 
 // Shared wording so login, mid-session enforcement, and inbound email
 // all say the same thing about a disabled company.
@@ -38,7 +39,7 @@ async function authenticateToken(req, res, next) {
     if (user.role !== 'platform_owner') {
       try {
         const result = await pool.query(
-          `SELECT c.isActive AS companyActive, m.isActive AS membershipActive
+          `SELECT c.isActive AS companyActive, c.trialEndsAt, m.isActive AS membershipActive
            FROM Memberships m JOIN Companies c ON m.companyId = c.id
            WHERE m.id = $1`,
           [user.membershipId]
@@ -46,6 +47,9 @@ async function authenticateToken(req, res, next) {
         const row = result.rows[0]
         if (!row || !row.companyactive) {
           return res.status(403).json({ error: INACTIVE_COMPANY_MESSAGE })
+        }
+        if (isTrialExpired(row.trialendsat)) {
+          return res.status(403).json({ error: TRIAL_ENDED_MESSAGE })
         }
         if (!row.membershipactive) {
           return res.status(403).json({ error: INACTIVE_MEMBERSHIP_MESSAGE })

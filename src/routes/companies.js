@@ -11,6 +11,7 @@ const { checkAndTrackOverLimit, enforceExpiredGracePeriods } = require('../utils
 const { seedDefaultLevels } = require('../utils/agentLevels')
 const { runEscalations } = require('../utils/escalation')
 const { parsePlanLimits } = require('../utils/planLimits')
+const { nextTrialEnd } = require('../utils/trial')
 const { EMAIL_LOGO } = require('../utils/emailBranding')
 const { APP_URL, API_URL } = require('../config/env')
 
@@ -103,10 +104,13 @@ router.post('/', authenticateToken, requirePlatformOwner, async (req, res) => {
     const supportEmail = await generateSupportEmail(pool, companyName)
 
     const companyResult = await pool.query(
-      `INSERT INTO Companies (name, tier, databaseType, companyType, supportEmail, maxUsers, aiEnabled, maxAiRequestsPerMonth, enforceUsageLimits)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+      `INSERT INTO Companies (name, tier, databaseType, companyType, supportEmail, maxUsers, aiEnabled, maxAiRequestsPerMonth, enforceUsageLimits, trialEndsAt)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
       [companyName, tier || 'starter', 'shared', companyType || 'internal', supportEmail,
-       limits.maxUsers, limits.aiEnabled, limits.maxAiRequestsPerMonth, limits.enforceUsageLimits]
+       limits.maxUsers, limits.aiEnabled, limits.maxAiRequestsPerMonth, limits.enforceUsageLimits,
+       // Optional free trial from the day the company is created (see
+       // utils/trial.js) — only when explicitly asked for.
+       req.body.startTrial === true ? nextTrialEnd('start').trialEndsAt : null]
     )
     const companyId = companyResult.rows[0].id
 
@@ -303,6 +307,41 @@ router.put('/:id/active', authenticateToken, requirePlatformOwner, async (req, r
     }
 
     res.json({ message: `${company.name} ${isActive ? 'reactivated' : 'disabled'} successfully!!`, isActive: company.isactive })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PUT change a company's free trial (see utils/trial.js).
+//   start   — a fresh 15-day trial from now
+//   extend  — add `days` (default 7) to the current end, or to today if
+//             it has already ended
+//   convert — the company is paying now, so there is no trial any more
+// Starting or extending clears the "reminder sent" / "ended" email
+// markers so the new end date gets its own reminders.
+router.put('/:id/trial', authenticateToken, requirePlatformOwner, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { action, days } = req.body
+
+    const current = await pool.query('SELECT trialEndsAt FROM Companies WHERE id = $1', [id])
+    if (current.rows.length === 0) {
+      return res.status(404).json({ error: 'Company not found' })
+    }
+
+    const next = nextTrialEnd(action, current.rows[0].trialendsat, days)
+    if (next.error) return res.status(400).json({ error: next.error })
+
+    const result = await pool.query(
+      `UPDATE Companies SET trialEndsAt = $1, trialReminderSentAt = NULL, trialEndedNotifiedAt = NULL
+       WHERE id = $2 RETURNING id, name, trialEndsAt`,
+      [next.trialEndsAt, id]
+    )
+    const company = result.rows[0]
+    const message = action === 'convert'
+      ? `${company.name} is now a paying customer — trial cleared!!`
+      : `${company.name}'s trial now ends on ${new Date(company.trialendsat).toDateString()}!!`
+    res.json({ message, company })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
