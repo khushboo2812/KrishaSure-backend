@@ -9,6 +9,7 @@ const { generateTicketId } = require('../utils/ticketId')
 const { classifyTicket } = require('../utils/classifyTicket')
 const { notifyNewComment } = require('../utils/commentNotifications')
 const { resumeFromPending } = require('../utils/pendingTickets')
+const { reopenEligibility, reopenTicket, sendTooOldToReopen } = require('../utils/reopenTicket')
 const { getSupplierCategories, supplierCanSeeCategory } = require('../utils/suppliers')
 const { pickAssignee } = require('../utils/assignment')
 const { getStartLevelName } = require('../utils/agentLevels')
@@ -217,7 +218,18 @@ router.post('/', async (req, res) => {
       if (ticket.status === 'Pending' && isClient) {
         await resumeFromPending(ticket, { byName: person.name })
       }
-      return res.status(200).json({ ticketId: ticket.ticketid, reply: true })
+      // A client replying to a resolved ticket (including one that
+      // closed itself while waiting on them) reopens it, on the same
+      // 2-week rule as the Reopen button. Staff and suppliers replying
+      // just add to the conversation. Past 2 weeks the reply stays as a
+      // comment and the client is told to raise a new ticket.
+      let reopened = false
+      if (ticket.status === 'Resolved' && isClient) {
+        const eligibility = reopenEligibility(ticket)
+        if (eligibility === 'ok') reopened = await reopenTicket(ticket, { byName: person.name })
+        else if (eligibility === 'expired') await sendTooOldToReopen(ticket)
+      }
+      return res.status(200).json({ ticketId: ticket.ticketid, reply: true, reopened })
     }
 
     // Each client org can have its own dedicated address on our shared

@@ -9,6 +9,7 @@ const { PRIORITIES } = require('../utils/classifyTicket')
 const { markPending, resumeFromPending, currentPendingHours } = require('../utils/pendingTickets')
 const { getSupplierCategories, supplierCanSeeCategory, getAssigneeSupplierCategories, userCanSeeTicket } = require('../utils/suppliers')
 const { EMAIL_LOGO } = require('../utils/emailBranding')
+const { reopenEligibility, reopenTicket } = require('../utils/reopenTicket')
 
 // A supplier only reaches tickets in their own categories and a client
 // only their own tickets; anything else answers 404, same as a ticket
@@ -403,65 +404,15 @@ router.post('/:id/reopen', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Ticket not found' })
     }
 
-    if (ticket.status !== 'Resolved') {
+    const eligibility = reopenEligibility(ticket)
+    if (eligibility === 'not_resolved') {
       return res.status(400).json({ error: 'Only resolved tickets can be reopened' })
     }
-
-    // Check if within 2 weeks
-    const resolvedDate = new Date(ticket.resolvedat)
-    const now = new Date()
-    const daysSinceResolved = (now - resolvedDate) / (1000 * 60 * 60 * 24)
-
-    if (daysSinceResolved > 14) {
+    if (eligibility === 'expired') {
       return res.status(400).json({ error: 'This ticket cannot be reopened as it was resolved more than 2 weeks ago. Please create a new ticket.' })
     }
 
-    // Reopen: keep same agent, change status back. reopenedAt marks the
-    // start of this new round — the live "open for"/SLA math (see
-    // reports.js's getTimerStart) uses it instead of the ticket's
-    // original createdAt, so a ticket that already used up its SLA
-    // window before its first resolution doesn't read as instantly
-    // breached again the moment it's reopened. createdAt itself is
-    // left untouched — ticket age and sort order elsewhere still
-    // reflect when it was actually first filed.
-    await pool.query(
-      "UPDATE Tickets SET status = 'Open/Assigned', reopenedAt = NOW(), pausedBusinessHours = 0, pendingSince = NULL, pendingReminderSentAt = NULL, escalatedCount = 0, escalatedAt = NULL, slaWarningSentAt = NULL, escalationAlertSentAt = NULL WHERE id = $1",
-      [id]
-    )
-
-    // Log the action
-    await pool.query(
-      'INSERT INTO TicketHistory (ticketId, action, performedBy) VALUES ($1, $2, $3)',
-      [id, 'Reopened', name]
-    )
-
-    // Notify everyone
-    const admins = await pool.query("SELECT p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE m.role = 'superadmin' AND m.companyId = $1", [companyId])
-    const adminEmails = admins.rows.map(a => a.email).join(',')
-
-    const agentResult = await pool.query(
-      `SELECT p.email FROM Memberships m JOIN People p ON m.personId = p.id WHERE p.name = $1 AND m.companyId = $2`,
-      [ticket.assignedto, companyId]
-    )
-    const agentEmail = agentResult.rows[0]?.email
-    const replyFromAddress = await getTicketReplyFromAddress(pool, { companyId, clientOrgId: ticket.clientorgid })
-
-    sendEmail(
-      ticket.clientemail,
-      `Ticket ${ticket.ticketid} Reopened`,
-      `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          ${EMAIL_LOGO}
-          <h1 style="color: #F59E0B;">Ticket Reopened</h1>
-          <p>Ticket <strong>${ticket.ticketid}</strong> has been reopened by ${name}.</p>
-          <p>It has been reassigned to <strong>${ticket.assignedto}</strong> for follow up.</p>
-          <br/>
-          <p style="color: #64748B; font-size: 12px;">KrishaSure · Powered by Krisha Solutions</p>
-        </div>
-      `,
-      agentEmail ? `${agentEmail},${adminEmails}` : adminEmails,
-      replyFromAddress
-    )
+    await reopenTicket(ticket, { byName: name })
 
     res.json({ message: 'Ticket reopened successfully!!' })
   } catch (err) {
